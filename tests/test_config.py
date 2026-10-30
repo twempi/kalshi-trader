@@ -50,6 +50,11 @@ def test_shipped_config_file_is_valid(monkeypatch: pytest.MonkeyPatch) -> None:
     s = Settings(_env_file=None)
     assert s.strategies.late_match.enabled and not s.strategies.price_threshold.enabled
     assert "KXATPMATCH" in s.discovery.series_tickers
+    assert [str(n) for n in s.dashboard.control_networks] == [
+        "100.64.0.0/10",
+        "fd7a:115c:a1e0::/48",
+    ]
+    assert s.dashboard.host == "127.0.0.1"  # never bound to the network directly
 
 
 def test_secret_values_are_masked(monkeypatch: pytest.MonkeyPatch) -> None:

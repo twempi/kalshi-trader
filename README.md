@@ -29,15 +29,16 @@ that hypothesis, not to assume it.
 7. [The dashboard](#the-dashboard)
 8. [Starting, pausing and stopping paper trading](#starting-pausing-and-stopping-paper-trading)
 9. [Running continuously (systemd user service)](#running-continuously-systemd-user-service)
-10. [Backtesting](#backtesting)
-11. [Understanding the performance statistics](#understanding-the-performance-statistics)
-12. [Running the tests](#running-the-tests)
-13. [Logs and data files](#logs-and-data-files)
-14. [Data sources: free vs paid](#data-sources-free-vs-paid)
-15. [Known limitations and blockers](#known-limitations-and-blockers)
-16. [Results to date](#results-to-date)
-17. [Milestone status](#milestone-status)
-18. [Troubleshooting](#troubleshooting)
+10. [Running on a NixOS server (nix-inputs module)](#running-on-a-nixos-server-nix-inputs-module)
+11. [Backtesting](#backtesting)
+12. [Understanding the performance statistics](#understanding-the-performance-statistics)
+13. [Running the tests](#running-the-tests)
+14. [Logs and data files](#logs-and-data-files)
+15. [Data sources: free vs paid](#data-sources-free-vs-paid)
+16. [Known limitations and blockers](#known-limitations-and-blockers)
+17. [Results to date](#results-to-date)
+18. [Milestone status](#milestone-status)
+19. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -60,6 +61,7 @@ Each item below was run against **real Kalshi data** on 2026-10-29 unless marked
 | Replay backtest on your own recorded data | Tested with synthetic recordings; needs recorded, settled matches to be meaningful |
 | Local web dashboard | Verified in a browser against live data |
 | systemd user service / Home Manager module | Provided as examples; **not installed** (that would touch files outside the project) |
+| NixOS service module (in [nix-inputs](https://github.com/twempi/nix-inputs)) | Tested in NixOS VMs on 2026-10-30: starts under systemd sandboxing, dashboard on localhost only, server CLI, graceful stop, and real Kalshi data recorded when the VM had internet. Not yet running on a real server |
 
 ## Architecture
 
@@ -294,9 +296,44 @@ Start `uv run kalshi-trader run` (or `uv run kalshi-trader dashboard`) and open
 
 Every chart has a "Table view" toggle. Light and dark themes are supported.
 
-The header has **Pause / Resume / Emergency stop / Clear stop** buttons. They only accept
-same-machine requests carrying a custom header, and the page is served with a strict
-Content-Security-Policy.
+The header has **Pause / Resume / Emergency stop / Clear stop** buttons. They work from this
+machine and, if you use Tailscale (below), from devices on your tailnet. Every request must carry
+a custom header, and the page is served with a strict Content-Security-Policy.
+
+### Viewing it from your phone or laptop (Tailscale)
+
+The dashboard only listens on `127.0.0.1`, so your LAN and the internet cannot reach it. To open
+it from any device on your tailnet, let Tailscale Serve share it over HTTPS. Run this once on
+the machine that runs the engine:
+
+```bash
+sudo tailscale serve --bg 8787
+tailscale serve status    # shows the address, e.g. https://<machine>.<your-tailnet>.ts.net/
+```
+
+Open that address on any device signed in to your tailnet.
+
+- This puts the dashboard on HTTPS port 443 of the machine's tailnet name, in front of anything
+  else serving there. If that port is taken (Caddy uses it on the T480s), give the dashboard its
+  own port with `sudo tailscale serve --bg --https=8787 8787` and open
+  `https://<machine>.<your-tailnet>.ts.net:8787/`. On a NixOS server, use the
+  [module](#running-on-a-nixos-server-nix-inputs-module) instead.
+- `--bg` makes it persistent: it keeps working across reboots and engine restarts.
+- The first run may print a link to enable HTTPS certificates for your tailnet. Approve it once
+  in the Tailscale admin console.
+- To skip `sudo` for Tailscale commands, run `sudo tailscale set --operator=$USER` once.
+- To stop sharing: `sudo tailscale serve --https=443 off` (or `--https=8787 off`). Avoid
+  `sudo tailscale serve reset` on a server: it removes every share on the machine, including
+  those of other services.
+
+Security notes:
+
+- Only devices on your tailnet can reach it, plus anyone you share the machine with in Tailscale.
+- **Never** use `tailscale funnel` for this dashboard. Funnel publishes to the public internet, and
+  the dashboard has no login. As a safeguard it refuses any request that arrives through Funnel.
+- Tailnet devices can also use the control buttons. This is set by `dashboard.control_networks`
+  in `config/settings.toml`, which lists Tailscale's address ranges. Set it to `[]` to make the
+  buttons work only on the machine itself.
 
 ## Starting, pausing and stopping paper trading
 
@@ -322,7 +359,8 @@ is hit. Change the bankroll with `KT_PAPER__STARTING_BALANCE` before the first r
 
 Optional. Nothing below is done automatically. It writes to `~/.config/systemd/user`, outside
 this project, so it is left for you to run. Both options use `scripts/run-service.sh`, which runs
-the engine inside the project's Nix shell.
+the engine inside the project's Nix shell. For an always-on NixOS server, the
+[NixOS module](#running-on-a-nixos-server-nix-inputs-module) is the better fit.
 
 **Plain systemd user unit:**
 
@@ -344,6 +382,87 @@ it is your call.
 **Home Manager:** import `deploy/home-manager/kalshi-trader.nix` in your Home Manager
 configuration and run `home-manager switch`. The file's header has the details. It is not
 imported anywhere by default.
+
+## Running on a NixOS server (nix-inputs module)
+
+[twempi/nix-inputs](https://github.com/twempi/nix-inputs) builds this repository as a Nix package
+(with uv2nix, from `uv.lock`) and provides a NixOS module, `services.kalshi-trader`. It pins this
+repository from GitHub, so a change here reaches the server only after it is pushed (see
+[Updating](#updating-the-server) below).
+
+The module runs `kalshi-trader run` as a system service:
+
+- as its own `kalshi-trader` system user, with systemd sandboxing;
+- with the database at `/var/lib/kalshi-trader/kalshi_trader.db` and JSON logs in
+  `/var/lib/kalshi-trader/logs/`. Console logs go to the journal;
+- with the dashboard on `127.0.0.1` only;
+- without credentials unless you add them. It then polls public REST data, as it does without `.env`.
+
+Host configuration, set up like the other services on the T480s (a Tailscale Service in front):
+
+```nix
+{ inputs, pkgs, ... }: let
+  kalshiTraderPort = 8787;
+in {
+  imports = [ inputs.twempi.nixosModules.kalshi-trader ];
+
+  services.kalshi-trader = {
+    enable = true;
+    port = kalshiTraderPort;
+  };
+
+  systemd.services.tailscale-serve-kalshi-trader = import ./_tailscale-serve-service.nix {
+    inherit pkgs;
+    name = "kalshi-trader";
+    description = "Expose kalshi-trader as a Tailscale Service";
+    port = kalshiTraderPort;
+  };
+}
+```
+
+The Tailscale Service also needs a one-time setup in the Tailscale admin console:
+
+1. Define a service named `kalshi-trader` with endpoint `tcp:8787`.
+2. Approve the server as its host.
+3. Make sure an access rule lets your devices reach it.
+
+The dashboard is then at `https://kalshi-trader.<your-tailnet>.ts.net:8787/`.
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `enable` | `false` | Run the engine and the dashboard |
+| `port` | `8787` | Dashboard port on `127.0.0.1` |
+| `configFile` | this repository's `config/settings.toml` | Non-secret settings. The module always sets `db_path`, `log_dir` and the dashboard port itself |
+| `environmentFile` | `null` | Optional `KT_*` secrets kept out of the Nix store, e.g. `KT_KALSHI__API_KEY_ID` and `KT_KALSHI__PRIVATE_KEY_PATH`. The key path must be absolute and readable by the `kalshi-trader` user. Use a read-only key |
+
+The module also installs a `kalshi-trader` command on the server that works on the service's
+database. It re-runs itself through `sudo` as the `kalshi-trader` user, so sudo may ask for
+your password:
+
+```bash
+kalshi-trader status
+kalshi-trader trading pause
+kalshi-trader backtest historical --days 30 --cache-dir /var/lib/kalshi-trader/cache
+kalshi-trader export --out /var/lib/kalshi-trader/paper_trades.csv
+journalctl -u kalshi-trader -f
+```
+
+Files it writes belong to `kalshi-trader`, so put output paths under `/var/lib/kalshi-trader`.
+
+To keep the history recorded on another machine, stop the engine there, copy its
+`data/kalshi_trader.db` to the server, and install it while the service is stopped:
+
+```bash
+sudo systemctl stop kalshi-trader
+sudo install -o kalshi-trader -g kalshi-trader -m 640 kalshi_trader.db /var/lib/kalshi-trader/
+sudo systemctl start kalshi-trader
+```
+
+### Updating the server
+
+1. Commit and push this repository.
+2. In nix-inputs: `nix flake update kalshi-trader-src`, then commit and push.
+3. In the system flake: `nix flake update twempi`, then rebuild the server.
 
 ## Backtesting
 
@@ -457,7 +576,9 @@ nix develop -c sqlite3 data/kalshi_trader.db '.tables'        # inspect the data
 ```
 
 The console shows human-readable logs. Recent warnings and system events also appear on the
-dashboard's System health tab. Everything under `data/` is git-ignored.
+dashboard's System health tab. Everything under `data/` is git-ignored. Under the NixOS module
+the database and log files are in `/var/lib/kalshi-trader/` instead, and
+`journalctl -u kalshi-trader` shows the console log.
 
 ## Data sources: free vs paid
 
@@ -564,7 +685,7 @@ publishes no historical scores. That needs weeks of recordings (`kalshi-trader r
 | 3. Paper trading: account, positions, fees, execution, risk, persistent history | Done |
 | 4. Tennis analytics: live scores, late-match strategy, probability, EV, signals | Done |
 | 5. Dashboard: real market data, paper performance, opportunities, analytics, health | Done |
-| 6. Backtesting and reliability: replay, reproducible evaluations, recovery, NixOS service, tests, docs | Done. Replay awaits recorded data; service files not installed |
+| 6. Backtesting and reliability: replay, reproducible evaluations, recovery, NixOS service, tests, docs | Done. Replay awaits recorded data; NixOS module tested in VMs, not yet deployed |
 
 ## Troubleshooting
 
@@ -578,3 +699,4 @@ publishes no historical scores. That needs weeks of recordings (`kalshi-trader r
 | No live matches in `scan --live-only` | Tennis is seasonal and time-zone dependent; try `scan` for upcoming matches |
 | Trading never happens | Usually correct behaviour. The markets tab shows the conservative EV of every contract (mostly negative); the signals table lists every proposal the risk manager rejected, with reasons (stale data, spread, liquidity, limits) |
 | Many `kalshi_request_retry ... status=429` log lines | Another process (e.g. a backtest) is sharing the request budget. The client halves its rate and retries automatically |
+| `https://kalshi-trader.<tailnet>.ts.net:8787` does not load | `systemctl status kalshi-trader tailscale-serve-kalshi-trader` on the server, and check that the service is defined and the host approved in the Tailscale admin console |

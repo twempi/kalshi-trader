@@ -20,6 +20,19 @@ log = get_logger("cli")
 
 
 # ---------------------------------------------------------------- run/serve
+def _uvicorn_options(settings: Settings) -> dict[str, Any]:
+    # X-Forwarded-For is trusted only from this machine: that is where a local proxy such as
+    # `tailscale serve` connects from, and it reports the real visitor's address there.
+    return {
+        "host": settings.dashboard.host,
+        "port": settings.dashboard.port,
+        "log_level": "warning",
+        "access_log": False,
+        "proxy_headers": True,
+        "forwarded_allow_ips": "127.0.0.1,::1",
+    }
+
+
 def _embedded_server(settings: Settings) -> Any:
     import uvicorn
 
@@ -32,14 +45,7 @@ def _embedded_server(settings: Settings) -> Any:
         def capture_signals(self):  # type: ignore[override]
             yield
 
-    config = uvicorn.Config(
-        create_app(settings),
-        host=settings.dashboard.host,
-        port=settings.dashboard.port,
-        log_level="warning",
-        access_log=False,
-    )
-    return EmbeddedServer(config)
+    return EmbeddedServer(uvicorn.Config(create_app(settings), **_uvicorn_options(settings)))
 
 
 async def _run(settings: Settings, record_only: bool, dashboard: bool) -> None:
@@ -72,13 +78,7 @@ def cmd_dashboard(settings: Settings, args: argparse.Namespace) -> int:
     from kalshi_trader.dashboard.app import create_app
 
     print(f"Dashboard: http://{settings.dashboard.host}:{settings.dashboard.port}")
-    uvicorn.run(
-        create_app(settings),
-        host=settings.dashboard.host,
-        port=settings.dashboard.port,
-        log_level="warning",
-        access_log=False,
-    )
+    uvicorn.run(create_app(settings), **_uvicorn_options(settings))
     return 0
 
 

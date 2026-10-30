@@ -280,7 +280,7 @@ def test_dashboard_endpoints(settings: Settings) -> None:
 
 
 def test_dashboard_controls_require_header(settings: Settings) -> None:
-    client = TestClient(create_app(settings))
+    client = TestClient(create_app(settings), client=("127.0.0.1", 50000))
     assert client.post("/api/control/pause").status_code == 403
     ok = client.post("/api/control/pause", headers={"X-Kalshi-Trader": "1"})
     assert ok.status_code == 200
@@ -288,3 +288,43 @@ def test_dashboard_controls_require_header(settings: Settings) -> None:
     client.post("/api/control/emergency_stop", headers={"X-Kalshi-Trader": "1"})
     assert client.get("/api/overview").json()["emergency_stop"] is True
     assert client.post("/api/control/nope", headers={"X-Kalshi-Trader": "1"}).status_code == 404
+
+
+def test_dashboard_controls_from_tailnet_only_when_configured(settings: Settings) -> None:
+    header = {"X-Kalshi-Trader": "1"}
+    phone = ("100.101.102.103", 50000)  # a device on the tailnet, as `tailscale serve` reports
+    assert (
+        TestClient(create_app(settings), client=phone)
+        .post("/api/control/pause", headers=header)
+        .status_code
+        == 403
+    )  # default: this machine only
+    settings.dashboard.control_networks = ["100.64.0.0/10", "fd7a:115c:a1e0::/48"]
+    app = create_app(settings)
+    assert (
+        TestClient(app, client=phone).post("/api/control/pause", headers=header).status_code == 200
+    )
+    ipv6 = ("fd7a:115c:a1e0::1234", 50000)
+    assert (
+        TestClient(app, client=ipv6).post("/api/control/resume", headers=header).status_code == 200
+    )
+    lan = ("192.168.1.50", 50000)
+    assert TestClient(app, client=lan).post("/api/control/pause", headers=header).status_code == 403
+    assert TestClient(app, client=lan).get("/api/overview").status_code == 200  # viewing is fine
+
+
+def test_dashboard_refuses_tailscale_funnel(settings: Settings) -> None:
+    client = TestClient(create_app(settings), client=("127.0.0.1", 50000))
+    blocked = client.get("/", headers={"Tailscale-Funnel-Request": "?1"})
+    assert blocked.status_code == 403 and "Content-Security-Policy" in blocked.headers
+    assert (
+        client.get("/static/app.js", headers={"Tailscale-Funnel-Request": "?1"}).status_code == 403
+    )
+
+
+def test_uvicorn_trusts_forwarded_for_only_from_localhost(settings: Settings) -> None:
+    from kalshi_trader.main import _uvicorn_options
+
+    options = _uvicorn_options(settings)
+    assert options["host"] == "127.0.0.1" and options["proxy_headers"] is True
+    assert options["forwarded_allow_ips"] == "127.0.0.1,::1"

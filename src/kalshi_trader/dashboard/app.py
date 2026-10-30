@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import csv
 import io
+import ipaddress
 import json
 import time
 from decimal import Decimal
@@ -90,7 +91,11 @@ def create_app(settings: Settings, db: Database | None = None) -> FastAPI:
 
     @app.middleware("http")
     async def security_headers(request: Request, call_next: Any) -> Any:
-        response = await call_next(request)
+        if request.headers.get("tailscale-funnel-request"):
+            # Tailscale Funnel means the public internet; this dashboard has no login.
+            response = JSONResponse({"detail": "not available over Tailscale Funnel"}, 403)
+        else:
+            response = await call_next(request)
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
             "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
@@ -332,11 +337,21 @@ def create_app(settings: Settings, db: Database | None = None) -> FastAPI:
             headers={"Content-Disposition": "attachment; filename=paper_trades.csv"},
         )
 
+    control_networks = [ipaddress.ip_network(str(n)) for n in settings.dashboard.control_networks]
+
+    def control_allowed(client: str) -> bool:
+        """This machine, or a configured network. Behind `tailscale serve` the client is the
+        visitor's tailnet address, taken from X-Forwarded-For (trusted only from localhost)."""
+        try:
+            address = ipaddress.ip_address(client)
+        except ValueError:
+            return False
+        return address.is_loopback or any(address in network for network in control_networks)
+
     @app.post("/api/control/{action}")
     def control(action: str, request: Request) -> JSONResponse:
-        client = request.client.host if request.client else ""
-        if client not in ("127.0.0.1", "::1", "localhost", "testclient"):
-            raise HTTPException(status_code=403, detail="control is local-only")
+        if not control_allowed(request.client.host if request.client else ""):
+            raise HTTPException(status_code=403, detail="control not allowed from this address")
         if request.headers.get("x-kalshi-trader") != "1":
             raise HTTPException(status_code=403, detail="missing control header")
         if action == "pause":

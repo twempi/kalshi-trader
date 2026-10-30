@@ -15,7 +15,14 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, BeforeValidator, Field, SecretStr, model_validator
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    Field,
+    IPvAnyNetwork,
+    SecretStr,
+    model_validator,
+)
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -208,6 +215,9 @@ class DashboardSettings(BaseModel):
     host: str = "127.0.0.1"
     port: int = 8787
     refresh_interval_ms: int = 2000
+    # Networks besides this machine allowed to use pause/resume/emergency stop (e.g. the
+    # tailnet when the dashboard is shared with `tailscale serve`).
+    control_networks: list[IPvAnyNetwork] = Field(default_factory=list)
 
 
 class Settings(BaseSettings):

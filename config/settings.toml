@@ -100,5 +100,9 @@ enable_exits = false
 take_profit_bid = 0.99
 
 [dashboard]
-host = "127.0.0.1"
+host = "127.0.0.1"   # this machine only; share with other devices via `tailscale serve` (README)
 port = 8787
+# Who besides this machine may use Pause / Resume / Emergency stop. These are Tailscale's
+# address ranges, so devices on your tailnet can use the buttons when the dashboard is shared
+# with `tailscale serve`. Set to [] to make the buttons work only on this machine.
+control_networks = ["100.64.0.0/10", "fd7a:115c:a1e0::/48"]
