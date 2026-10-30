@@ -1,0 +1,528 @@
+{
+ "captured_at": "2026-10-29T19:39:48.597027+00:00",
+ "samples": [
+  {
+   "kind": "finished",
+   "live_data": {
+    "details": {
+     "advantage": "",
+     "away_overall_score": 2,
+     "competitor1_current_round_score": 0,
+     "competitor1_id": "90ded265-bda3-4c07-9bcd-3b94089a4d7e",
+     "competitor1_is_home": true,
+     "competitor1_overall_score": 0,
+     "competitor1_round_scores": [
+      {
+       "outcome": "loser",
+       "score": 6,
+       "tiebreak_score": 3
+      },
+      {
+       "outcome": "loser",
+       "score": 1
+      }
+     ],
+     "competitor1_seed": 0,
+     "competitor1_statistics": {
+      "aces": 6,
+      "breakpoints_won": 1,
+      "double_faults": 3,
+      "first_serve_points_won": 21,
+      "first_serve_successful": 30,
+      "games_won": 7,
+      "max_games_in_a_row": 3,
+      "max_points_in_a_row": 5,
+      "points_won": 59,
+      "second_serve_points_won": 15,
+      "second_serve_successful": 33,
+      "service_games_won": 6,
+      "service_points_lost": 30,
+      "service_points_won": 36,
+      "tiebreaks_won": 0,
+      "total_breakpoints": 5
+     },
+     "competitor2_current_round_score": 0,
+     "competitor2_id": "9a60a9bb-4553-4766-854d-f7b17b339f78",
+     "competitor2_overall_score": 2,
+     "competitor2_round_scores": [
+      {
+       "outcome": "winner",
+       "score": 7,
+       "tiebreak_score": 7
+      },
+      {
+       "outcome": "winner",
+       "score": 6
+      }
+     ],
+     "competitor2_seed": 0,
+     "competitor2_statistics": {
+      "aces": 6,
+      "breakpoints_won": 3,
+      "double_faults": 3,
+      "first_serve_points_won": 33,
+      "first_serve_successful": 44,
+      "games_won": 13,
+      "max_games_in_a_row": 7,
+      "max_points_in_a_row": 6,
+      "points_won": 77,
+      "second_serve_points_won": 14,
+      "second_serve_successful": 23,
+      "service_games_won": 9,
+      "service_points_lost": 23,
+      "service_points_won": 47,
+      "tiebreaks_won": 1,
+      "total_breakpoints": 7
+     },
+     "completed_rounds": 2,
+     "home_overall_score": 0,
+     "match_status": "ended",
+     "round_winners": [
+      "9a60a9bb-4553-4766-854d-f7b17b339f78",
+      "9a60a9bb-4553-4766-854d-f7b17b339f78"
+     ],
+     "server": "",
+     "status": "closed",
+     "widget_status": "finished",
+     "winner": "9a60a9bb-4553-4766-854d-f7b17b339f78"
+    },
+    "milestone_id": "e37887ae-7336-44fb-be52-9ee00cd9116d",
+    "type": "tennis_tournament_singles"
+   },
+   "milestone": {
+    "category": "Sports",
+    "details": {
+     "best_of": "3",
+     "first_competitor_id": "90ded265-bda3-4c07-9bcd-3b94089a4d7e",
+     "gender": "men",
+     "main_game_event_ticker": "KXATPMATCH-26OCT25RODBAS",
+     "round": "Round Of 32",
+     "second_competitor_id": "9a60a9bb-4553-4766-854d-f7b17b339f78",
+     "status": "not_started",
+     "tour": "ATP",
+     "tournament_name": "ATP Vienna"
+    },
+    "end_date": "2026-10-28T18:41:05Z",
+    "id": "e37887ae-7336-44fb-be52-9ee00cd9116d",
+    "last_updated_ts": "2026-10-29T19:20:56.842436Z",
+    "notification_message": "The match is about to begin.",
+    "primary_event_tickers": [
+     "KXATPMATCH-26OCT25RODBAS",
+     "KXATPSETWINNER-26OCT25RODBAS-1",
+     "KXATPSETWINNER-26OCT25RODBAS-2",
+     "KXATPEXACTMATCH-26OCT25RODBAS"
+    ],
+    "related_event_tickers": [
+     "KXATPMATCH-26OCT25RODBAS",
+     "KXATPSETWINNER-26OCT25RODBAS-1",
+     "KXATPSETWINNER-26OCT25RODBAS-2",
+     "KXATPEXACTMATCH-26OCT25RODBAS",
+     "KXATPGSPREAD-26OCT25RODBAS",
+     "KXATPGTOTAL-26OCT25RODBAS"
+    ],
+    "source_id": "sr:sport_event:75989916",
+    "source_ids": {
+     "source_1_id": "5437757",
+     "source_2_id": "20261025A1462E59",
+     "source_3_id": "sr:sport_event:75989916"
+    },
+    "start_date": "2026-10-28T16:45:00Z",
+    "title": "Rodionov vs Basilashvili",
+    "type": "tennis_tournament_singles"
+   }
+  },
+  {
+   "kind": "retired",
+   "live_data": {
+    "details": {
+     "advantage": "",
+     "away_overall_score": 0,
+     "competitor1_current_round_score": 0,
+     "competitor1_id": "214fe1b7-a8d1-4922-b4f8-63a14f469395",
+     "competitor1_is_home": true,
+     "competitor1_overall_score": 0,
+     "competitor1_round_scores": [
+      {
+       "outcome": "ongoing",
+       "score": 3
+      }
+     ],
+     "competitor1_seed": 0,
+     "competitor1_statistics": {},
+     "competitor2_current_round_score": 0,
+     "competitor2_id": "1089a108-a43b-4fba-a3ee-fbcf112c4cfb",
+     "competitor2_overall_score": 0,
+     "competitor2_round_scores": [
+      {
+       "outcome": "ongoing",
+       "score": 4
+      }
+     ],
+     "competitor2_seed": 0,
+     "competitor2_statistics": {},
+     "completed_rounds": 0,
+     "home_overall_score": 0,
+     "last_set_scoring_type": "StandardTiebreak",
+     "match_status": "retired",
+     "result_pending": false,
+     "round_winners": null,
+     "server": "1089a108-a43b-4fba-a3ee-fbcf112c4cfb",
+     "status": "closed",
+     "stream": {
+      "available": true,
+      "event_id": 36339
+     },
+     "widget_status": "finished",
+     "winner": "1089a108-a43b-4fba-a3ee-fbcf112c4cfb"
+    },
+    "milestone_id": "a5cd6474-8d15-4914-87e5-be7977ff4882",
+    "type": "tennis_tournament_singles"
+   },
+   "milestone": {
+    "category": "Sports",
+    "details": {
+     "first_competitor_id": "214fe1b7-a8d1-4922-b4f8-63a14f469395",
+     "gender": "men",
+     "main_game_event_ticker": "KXITFMATCH-26OCT28JONHAR",
+     "round": "Round of 32",
+     "second_competitor_id": "1089a108-a43b-4fba-a3ee-fbcf112c4cfb",
+     "status": "P",
+     "tour": "ITF",
+     "tournament_name": "M25 Norman OK"
+    },
+    "end_date": "2026-10-28T15:56:35Z",
+    "id": "a5cd6474-8d15-4914-87e5-be7977ff4882",
+    "last_updated_ts": "2026-10-29T16:20:56.843861Z",
+    "notification_message": "The match is about to begin.",
+    "primary_event_tickers": [
+     "KXITFMATCH-26OCT28JONHAR"
+    ],
+    "related_event_tickers": [
+     "KXITFMATCH-26OCT28JONHAR"
+    ],
+    "source_ids": {},
+    "start_date": "2026-10-28T15:07:24Z",
+    "title": "Jong vs Harazaki",
+    "type": "tennis_tournament_singles"
+   }
+  },
+  {
+   "kind": "started",
+   "live_data": {
+    "details": {
+     "advantage": "",
+     "away_overall_score": 0,
+     "competitor1_current_round_score": 40,
+     "competitor1_id": "033a9039-8f3d-4d58-9f3e-36a0736b0c03",
+     "competitor1_is_home": true,
+     "competitor1_overall_score": 0,
+     "competitor1_round_scores": [
+      {
+       "outcome": "ongoing",
+       "score": 5
+      }
+     ],
+     "competitor1_seed": 0,
+     "competitor1_statistics": {
+      "gamescore": "40"
+     },
+     "competitor2_current_round_score": 30,
+     "competitor2_id": "128f25da-7741-42b5-a6f1-7446bb1b522c",
+     "competitor2_overall_score": 0,
+     "competitor2_round_scores": [
+      {
+       "outcome": "ongoing",
+       "score": 4
+      }
+     ],
+     "competitor2_seed": 0,
+     "competitor2_statistics": {
+      "gamescore": "30"
+     },
+     "completed_rounds": 0,
+     "home_overall_score": 0,
+     "last_set_scoring_type": "StandardTiebreak",
+     "live_data_delayed": false,
+     "match_status": "",
+     "round_winners": null,
+     "server": "033a9039-8f3d-4d58-9f3e-36a0736b0c03",
+     "status": "started",
+     "widget_status": "live",
+     "winner": ""
+    },
+    "milestone_id": "7233898d-438b-4f69-be07-525c44f3ac25",
+    "type": "tennis_tournament_singles"
+   },
+   "milestone": {
+    "category": "Sports",
+    "details": {
+     "first_competitor_id": "033a9039-8f3d-4d58-9f3e-36a0736b0c03",
+     "gender": "men",
+     "main_game_event_ticker": "KXITFMATCH-26OCT28PAPRYB",
+     "round": "Round of 32",
+     "second_competitor_id": "128f25da-7741-42b5-a6f1-7446bb1b522c",
+     "status": "P",
+     "tour": "ITF",
+     "tournament_name": "M25 Norman OK"
+    },
+    "id": "7233898d-438b-4f69-be07-525c44f3ac25",
+    "last_updated_ts": "2026-10-28T18:40:50.461473Z",
+    "notification_message": "The match is about to begin.",
+    "primary_event_tickers": [
+     "KXITFMATCH-26OCT28PAPRYB"
+    ],
+    "related_event_tickers": [
+     "KXITFMATCH-26OCT28PAPRYB"
+    ],
+    "source_ids": {},
+    "start_date": "2026-10-28T18:36:44Z",
+    "title": "Papamalamis vs Rybakov",
+    "type": "tennis_tournament_singles"
+   }
+  },
+  {
+   "kind": "live",
+   "live_data": {
+    "details": {
+     "advantage": "",
+     "away_overall_score": 0,
+     "competitor1_current_round_score": 40,
+     "competitor1_id": "8da0dea9-d3f0-4597-9cc4-9fc972607d6c",
+     "competitor1_is_home": true,
+     "competitor1_overall_score": 0,
+     "competitor1_round_scores": [
+      {
+       "outcome": "ongoing",
+       "score": 5
+      }
+     ],
+     "competitor1_seed": 0,
+     "competitor1_statistics": {
+      "aces": 1,
+      "breakpoints_won": 1,
+      "double_faults": 3,
+      "first_serve_points_won": 20,
+      "first_serve_successful": 32,
+      "games_won": 5,
+      "max_games_in_a_row": 2,
+      "max_points_in_a_row": 5,
+      "points_won": 38,
+      "second_serve_points_won": 6,
+      "second_serve_successful": 9,
+      "service_games_won": 4,
+      "service_points_lost": 18,
+      "service_points_won": 26,
+      "tiebreaks_won": 0,
+      "total_breakpoints": 3
+     },
+     "competitor2_current_round_score": 40,
+     "competitor2_id": "fa90500e-3606-48b0-85d5-43faf84a08d7",
+     "competitor2_overall_score": 0,
+     "competitor2_round_scores": [
+      {
+       "outcome": "ongoing",
+       "score": 5
+      }
+     ],
+     "competitor2_seed": 2,
+     "competitor2_statistics": {
+      "aces": 0,
+      "breakpoints_won": 1,
+      "double_faults": 1,
+      "first_serve_points_won": 15,
+      "first_serve_successful": 19,
+      "games_won": 5,
+      "max_games_in_a_row": 3,
+      "max_points_in_a_row": 6,
+      "points_won": 36,
+      "second_serve_points_won": 3,
+      "second_serve_successful": 10,
+      "service_games_won": 4,
+      "service_points_lost": 12,
+      "service_points_won": 18,
+      "tiebreaks_won": 0,
+      "total_breakpoints": 4
+     },
+     "completed_rounds": 0,
+     "home_overall_score": 0,
+     "match_status": "1st_set",
+     "round_winners": [],
+     "server": "8da0dea9-d3f0-4597-9cc4-9fc972607d6c",
+     "status": "live",
+     "widget_status": "live",
+     "winner": ""
+    },
+    "milestone_id": "c3d8047e-3530-48a0-af38-36ead90d8209",
+    "type": "tennis_tournament_singles"
+   },
+   "milestone": {
+    "category": "Sports",
+    "details": {
+     "first_competitor_id": "8da0dea9-d3f0-4597-9cc4-9fc972607d6c",
+     "gender": "women",
+     "main_game_event_ticker": "KXWTACHALLENGERMATCH-26OCT29CARGRA",
+     "round": "Round Of 16",
+     "second_competitor_id": "fa90500e-3606-48b0-85d5-43faf84a08d7",
+     "status": "not_started",
+     "tour": "WTA Challenger",
+     "tournament_name": "WTA 125K Curitiba"
+    },
+    "id": "c3d8047e-3530-48a0-af38-36ead90d8209",
+    "last_updated_ts": "2026-10-29T18:05:47.892822Z",
+    "notification_message": "The match is about to begin.",
+    "primary_event_tickers": [
+     "KXWTACHALLENGERMATCH-26OCT29CARGRA"
+    ],
+    "related_event_tickers": [
+     "KXWTACHALLENGERMATCH-26OCT29CARGRA"
+    ],
+    "source_id": "sr:sport_event:75838162",
+    "source_ids": {
+     "source_3_id": "sr:sport_event:75838162"
+    },
+    "start_date": "2026-10-29T18:20:00Z",
+    "title": "Carle vs Grabher",
+    "type": "tennis_tournament_singles"
+   }
+  },
+  {
+   "kind": "tiebreak",
+   "live_data": {
+    "details": {
+     "advantage": "",
+     "away_overall_score": 0,
+     "competitor1_current_round_score": 1,
+     "competitor1_id": "02fc4865-f3b1-47ba-8a38-0d70cb8b2bf5",
+     "competitor1_is_home": true,
+     "competitor1_overall_score": 0,
+     "competitor1_round_scores": [
+      {
+       "outcome": "ongoing",
+       "score": 6
+      }
+     ],
+     "competitor1_seed": 0,
+     "competitor1_statistics": {
+      "gamescore": "1"
+     },
+     "competitor2_current_round_score": 4,
+     "competitor2_id": "e14e7e14-fb88-4269-8db7-3b56416d9f57",
+     "competitor2_overall_score": 0,
+     "competitor2_round_scores": [
+      {
+       "outcome": "ongoing",
+       "score": 6
+      }
+     ],
+     "competitor2_seed": 0,
+     "competitor2_statistics": {
+      "gamescore": "4"
+     },
+     "completed_rounds": 0,
+     "home_overall_score": 0,
+     "last_set_scoring_type": "StandardTiebreak",
+     "match_status": "",
+     "round_winners": null,
+     "server": "02fc4865-f3b1-47ba-8a38-0d70cb8b2bf5",
+     "status": "started",
+     "stream": {
+      "available": true,
+      "event_id": 36548
+     },
+     "widget_status": "live",
+     "winner": ""
+    },
+    "milestone_id": "f6b126d5-89ea-4c8f-b7c9-0a5acc5060d9",
+    "type": "tennis_tournament_singles"
+   },
+   "milestone": {
+    "category": "Sports",
+    "details": {
+     "first_competitor_id": "02fc4865-f3b1-47ba-8a38-0d70cb8b2bf5",
+     "gender": "men",
+     "main_game_event_ticker": "KXITFMATCH-26OCT29KOHROD",
+     "round": "Round of 16",
+     "second_competitor_id": "e14e7e14-fb88-4269-8db7-3b56416d9f57",
+     "status": "P",
+     "tour": "ITF",
+     "tournament_name": "M25 Las Vegas NV"
+    },
+    "id": "f6b126d5-89ea-4c8f-b7c9-0a5acc5060d9",
+    "last_updated_ts": "2026-10-29T18:40:41.638764Z",
+    "notification_message": "The match is about to begin.",
+    "primary_event_tickers": [
+     "KXITFMATCH-26OCT29KOHROD"
+    ],
+    "related_event_tickers": [
+     "KXITFMATCH-26OCT29KOHROD"
+    ],
+    "source_ids": {},
+    "start_date": "2026-10-29T18:38:35Z",
+    "title": "Kohlmann de Freitas vs Roddick",
+    "type": "tennis_tournament_singles"
+   }
+  },
+  {
+   "kind": "scheduled",
+   "live_data": {
+    "details": {
+     "advantage": "",
+     "away_overall_score": 0,
+     "competitor1_current_round_score": 0,
+     "competitor1_id": "b9789ac6-580f-4bdb-b453-6ae855047ae1",
+     "competitor1_is_home": true,
+     "competitor1_overall_score": 0,
+     "competitor1_round_scores": null,
+     "competitor1_seed": 0,
+     "competitor1_statistics": {},
+     "competitor2_current_round_score": 0,
+     "competitor2_id": "0e3cd9b4-2198-4765-90f6-57f4cb9356b7",
+     "competitor2_overall_score": 0,
+     "competitor2_round_scores": null,
+     "competitor2_seed": 0,
+     "competitor2_statistics": {},
+     "completed_rounds": 0,
+     "home_overall_score": 0,
+     "match_status": "",
+     "round_winners": null,
+     "server": "",
+     "status": "not_started",
+     "stream": {
+      "available": false,
+      "event_id": 36589
+     },
+     "widget_status": "none",
+     "winner": ""
+    },
+    "milestone_id": "3ebc8fa8-c3ac-44b4-9308-e31eab1f6f8c",
+    "type": "tennis_tournament_singles"
+   },
+   "milestone": {
+    "category": "Sports",
+    "details": {
+     "first_competitor_id": "b9789ac6-580f-4bdb-b453-6ae855047ae1",
+     "gender": "women",
+     "main_game_event_ticker": "KXITFWMATCH-26OCT29SATSEM",
+     "round": "Quarterfinal",
+     "second_competitor_id": "0e3cd9b4-2198-4765-90f6-57f4cb9356b7",
+     "status": "SCH",
+     "tour": "ITF",
+     "tournament_name": "W35 Sydney"
+    },
+    "id": "3ebc8fa8-c3ac-44b4-9308-e31eab1f6f8c",
+    "last_updated_ts": "2026-10-29T09:17:57.556924Z",
+    "notification_message": "The match is about to begin.",
+    "primary_event_tickers": [
+     "KXITFWMATCH-26OCT29SATSEM"
+    ],
+    "related_event_tickers": [
+     "KXITFWMATCH-26OCT29SATSEM"
+    ],
+    "source_ids": {},
+    "start_date": "2026-10-29T23:00:00Z",
+    "title": "Sato vs Sema",
+    "type": "tennis_tournament_singles"
+   }
+  }
+ ]
+}

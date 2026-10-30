@@ -1,0 +1,31 @@
+# systemd *user* service for kalshi-trader (paper trading only).
+#
+# Install without touching system configuration:
+#   mkdir -p ~/.config/systemd/user
+#   cp deploy/systemd/kalshi-trader.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now kalshi-trader
+#   journalctl --user -u kalshi-trader -f
+#
+# To keep it running while logged out: loginctl enable-linger "$USER"
+# (Home Manager users: see deploy/home-manager/kalshi-trader.nix instead.)
+
+[Unit]
+Description=Kalshi tennis research engine (paper trading only, no real orders)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Projects/kalshi-trader
+Environment=PATH=/run/current-system/sw/bin:%h/.nix-profile/bin:/nix/var/nix/profiles/default/bin
+ExecStart=%h/Projects/kalshi-trader/scripts/run-service.sh run
+Restart=on-failure
+RestartSec=15
+KillSignal=SIGTERM
+TimeoutStopSec=45
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,104 @@
+# kalshi-trader configuration (non-secret). Secrets go in .env, never here.
+# Any value can be overridden from the environment, e.g. KT_RISK__MAX_OPEN_POSITIONS=3.
+# PAPER TRADING ONLY: this application has no code path that submits real orders.
+
+log_level = "INFO"
+db_path = "data/kalshi_trader.db"
+log_dir = "data/logs"
+
+[kalshi]
+environment = "prod"            # market data from production; "demo" for the sandbox
+max_requests_per_second = 8.0   # client-side cap; each HTTP 429 halves it, then it recovers
+burst = 10
+max_retries = 5
+use_websocket = true            # only used when API credentials are configured
+
+[discovery]
+series_tickers = [
+  "KXATPMATCH", "KXWTAMATCH", "KXATPCHALLENGERMATCH",
+  "KXWTACHALLENGERMATCH", "KXITFMATCH", "KXITFWMATCH",
+]
+refresh_interval_s = 60
+lookahead_hours = 6
+lookback_hours = 18
+
+[market_data]
+rest_poll_interval_s = 3.0      # REST order-book polling when the WebSocket is unavailable
+recorded_depth_levels = 5
+snapshot_heartbeat_s = 60
+status_refresh_interval_s = 30
+
+[tennis]
+provider = "kalshi_live_data"   # free Kalshi Live Data API; "none" disables scores
+poll_interval_s = 5.0
+snapshot_heartbeat_s = 120
+
+[model]
+serve_mean_sd = 0.03                  # sd of the match's average serve-point win prob
+strength_diff_sd_with_price = 0.025   # sd of the players' serve-prob difference, price-anchored
+strength_diff_sd_no_price = 0.06      # ... when no pre-match price is known
+prior_draws = 4000                    # sampling-importance-resampling draws
+use_pre_match_price_prior = true
+retirement_hazard_per_game = 0.0003
+uncertainty_samples = 200
+credible_quantile = 0.10
+latency_points = 1                    # assume the score feed may be 1 point behind the market
+
+[model.serve_win_prior]
+ATP = 0.640
+WTA = 0.560
+ATP_CHALLENGER = 0.620
+WTA_CHALLENGER = 0.555
+ITF_MEN = 0.600
+ITF_WOMEN = 0.545
+
+[strategies]
+evaluation_interval_s = 1.0
+
+[strategies.late_match]
+enabled = true
+min_price = 0.80
+max_price = 0.97
+min_model_prob = 0.90
+min_edge = 0.02                 # $ per contract after fees, on the conservative probability
+max_games_from_victory = 3
+require_deciding_set = false
+max_spread = 0.04
+limit_slippage = 0.01
+
+[strategies.price_threshold]     # score-agnostic control strategy
+enabled = false
+min_price = 0.90
+max_price = 0.97
+max_spread = 0.03
+limit_slippage = 0.00
+require_live_match = true
+
+[risk]
+max_fraction_per_trade = 0.02   # of current equity
+max_position_cost = 25          # dollars
+max_daily_loss = 50             # dollars (UTC day, mark-to-bid)
+max_drawdown_fraction = 0.15    # triggers the persistent emergency stop
+max_open_positions = 5
+min_liquidity_contracts = 10
+max_spread = 0.05
+max_market_data_age_s = 10
+max_score_data_age_s = 30
+max_trades_per_market = 1
+max_trades_per_event = 1
+kelly_fraction = 0.10
+max_consecutive_errors = 5
+
+[fees]
+taker_rate = 0.07
+maker_rate = 0.0175
+
+[paper]
+starting_balance = 1000
+displayed_liquidity_fraction = 0.5
+enable_exits = false
+take_profit_bid = 0.99
+
+[dashboard]
+host = "127.0.0.1"
+port = 8787

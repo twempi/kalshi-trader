@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kalshi Trader - paper trading</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="top">
+    <h1>Kalshi tennis research</h1>
+    <span class="sim-badge" title="No real orders are ever placed">SIMULATED / PAPER</span>
+    <span id="engine-pill" class="pill neutral"><span class="dot"></span><span>Engine: …</span></span>
+    <span id="trading-pill" class="pill neutral"><span class="dot"></span><span>Trading: …</span></span>
+    <span class="spacer"></span>
+    <button class="btn" id="btn-pause" type="button">Pause paper trading</button>
+    <button class="btn" id="btn-resume" type="button">Resume</button>
+    <button class="btn danger" id="btn-estop" type="button">Emergency stop</button>
+    <button class="btn" id="btn-clear-estop" type="button">Clear stop</button>
+    <button class="btn" id="btn-theme" type="button" aria-label="Toggle colour theme">Theme</button>
+  </header>
+  <div class="banner" id="banner">
+    Simulated paper trading on real, live Kalshi order books. No real orders are placed.
+    Model probabilities are statistical estimates, not guarantees; a high win probability is
+    not the same as positive expected value.
+  </div>
+  <nav class="tabs" role="tablist">
+    <button role="tab" data-view="overview" aria-selected="true">Overview</button>
+    <button role="tab" data-view="markets" aria-selected="false">Live tennis markets</button>
+    <button role="tab" data-view="activity" aria-selected="false">Trading activity</button>
+    <button role="tab" data-view="analytics" aria-selected="false">Analytics</button>
+    <button role="tab" data-view="health" aria-selected="false">System health</button>
+  </nav>
+  <main>
+    <section class="view" id="view-overview">
+      <div class="kpis" id="kpis"></div>
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-head"><div class="grow">
+            <h2>Account equity (mark-to-bid)</h2>
+            <p class="caption">Simulated account value; open positions valued at the current best bid.</p>
+          </div></div>
+          <div id="overview-equity"></div>
+        </div>
+        <div class="card">
+          <h2>Recent activity</h2>
+          <p class="caption">Paper fills, settlements, operator actions and warnings.</p>
+          <div class="table-wrap" id="overview-events"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="view" id="view-markets" hidden>
+      <div class="filters">
+        <input type="search" id="mk-search" placeholder="Filter player, match, competition" aria-label="Filter markets">
+        <select id="mk-tour" aria-label="Tour">
+          <option value="">All tours</option>
+          <option value="ATP">ATP</option><option value="WTA">WTA</option>
+          <option value="ATP_CHALLENGER">ATP Challenger</option>
+          <option value="WTA_CHALLENGER">WTA Challenger</option>
+          <option value="ITF_MEN">ITF men</option><option value="ITF_WOMEN">ITF women</option>
+        </select>
+        <label><input type="checkbox" id="mk-live"> Live matches only</label>
+        <label><input type="checkbox" id="mk-opps"> Opportunities only</label>
+        <select id="mk-sort" aria-label="Sort by">
+          <option value="ev">Sort: estimated EV (conservative)</option>
+          <option value="progress">Sort: match progress</option>
+          <option value="price">Sort: contract price</option>
+          <option value="liquidity">Sort: liquidity</option>
+          <option value="start">Sort: start time</option>
+        </select>
+        <span class="muted small" id="mk-count"></span>
+      </div>
+      <div class="card">
+        <h2>Tennis match-winner markets</h2>
+        <p class="caption">Prices are real Kalshi quotes (YES side). Market prob = mid of bid/ask.
+          Model prob = Markov estimate; "robust" = lower credible bound after assuming the score feed lags by
+          the configured number of points. EV = robust prob − (ask + fees) per contract. Rows tinted =
+          a strategy flagged an opportunity (subject to risk checks).</p>
+        <div class="table-wrap" id="markets-table"></div>
+      </div>
+    </section>
+
+    <section class="view" id="view-activity" hidden>
+      <div class="card">
+        <h2>Open simulated positions</h2>
+        <p class="caption">Marked at the current best bid for the held side.</p>
+        <div class="table-wrap" id="positions-table"></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><div class="grow">
+          <h2>Cumulative realised P&amp;L</h2>
+          <p class="caption">Simulated; after fees; by settlement time.</p>
+        </div></div>
+        <div id="activity-cum"></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><div class="grow">
+          <h2>Completed simulated trades</h2>
+          <p class="caption">Each row is one simulated entry and its settlement or exit.</p>
+        </div><a class="btn" href="/api/export/trades.csv" download>Export CSV</a></div>
+        <div class="table-wrap" id="trades-table"></div>
+      </div>
+      <div class="card">
+        <h2>Recent strategy signals</h2>
+        <p class="caption">Proposals from strategies and the risk manager's decision.</p>
+        <div class="table-wrap" id="signals-table"></div>
+      </div>
+    </section>
+
+    <section class="view" id="view-analytics" hidden>
+      <div class="kpis" id="analytics-kpis"></div>
+      <div class="card" id="significance-card">
+        <h2>Is it skill or luck?</h2>
+        <p class="caption">Null hypothesis: every contract wins with probability equal to its entry price
+          (the market is calibrated). Small samples cannot distinguish skill from randomness.</p>
+        <div id="significance"></div>
+      </div>
+      <div class="grid-2">
+        <div class="card"><h2>Account equity</h2><p class="caption">Mark-to-bid, simulated.</p><div id="an-equity"></div></div>
+        <div class="card"><h2>Profit / loss over time</h2><p class="caption">Cumulative realised, after fees.</p><div id="an-pnl"></div></div>
+        <div class="card"><h2>Drawdown</h2><p class="caption">Equity below its running peak.</p><div id="an-dd"></div></div>
+        <div class="card"><h2>Win rate by entry price</h2><p class="caption">Bars: empirical win rate. Ticks: average entry price (break-even before fees).</p><div id="an-calib"></div></div>
+        <div class="card"><h2>Trade outcome distribution</h2><p class="caption">Realised P&amp;L per trade.</p><div id="an-hist"></div></div>
+        <div class="card"><h2>Performance by strategy</h2><p class="caption">All values simulated.</p><div class="table-wrap" id="an-strategy"></div></div>
+      </div>
+      <div class="card">
+        <h2>Backtest runs</h2>
+        <p class="caption">Stored results with their data source (recorded replay or historical Kalshi candles). Out-of-sample = the later part of the period, never used to choose parameters.</p>
+        <div class="table-wrap" id="backtests-table"></div>
+      </div>
+    </section>
+
+    <section class="view" id="view-health" hidden>
+      <div class="kpis" id="health-kpis"></div>
+      <div class="card">
+        <h2>Components</h2>
+        <p class="caption">Kalshi REST/WebSocket, tennis score feed, exchange status and engine loops.</p>
+        <div class="table-wrap" id="health-table"></div>
+      </div>
+      <div class="card">
+        <h2>Recent warnings and errors</h2>
+        <div class="table-wrap" id="health-events"></div>
+      </div>
+    </section>
+  </main>
+  <script src="/static/charts.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>
