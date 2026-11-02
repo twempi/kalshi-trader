@@ -4,7 +4,8 @@
 * ``totals``: counts by (strategy, status, normalised first reason) since start.
 * Persisted daily aggregates (``strategy_diagnostics``) and a throttled log of individual
   opportunities (``opportunities``): a row is written when an opportunity's status/reasons
-  change, or at most every ``persist_interval_s`` while unchanged.
+  change, otherwise at most every ``persist_interval_s`` (actionable) or ``quiet_interval_s``
+  (filtered/unsupported).
 
 Reasons are normalised (numbers replaced by ``#``) so "order book stale (12.3s)" and
 "order book stale (14.0s)" count as the same cause.
@@ -21,7 +22,7 @@ from typing import Any
 
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
-from kalshi_trader.core.opportunity import Opportunity
+from kalshi_trader.core.opportunity import DecisionStatus, Opportunity
 from kalshi_trader.database.repository import Repository
 from kalshi_trader.database.tables import DiagnosticCountRow, OpportunityRow
 
@@ -45,10 +46,12 @@ class Diagnostics:
         data_kind: str = "live",
         persist_interval_s: float = 60.0,
         persist_opportunities: bool = True,
+        quiet_interval_s: float = 600.0,
     ) -> None:
         self.repo = repo
         self.data_kind = data_kind
         self.persist_interval_s = persist_interval_s
+        self.quiet_interval_s = quiet_interval_s
         self.persist_opportunities = persist_opportunities and repo is not None
         self.last_cycle: dict[str, Counter[str]] = {}
         self.totals: Counter[tuple[str, str, str]] = Counter()
@@ -78,9 +81,15 @@ class Diagnostics:
         self.errors[f"{strategy}: {reason_key(error)[:120]}"] += 1
 
     def _maybe_write(self, opp: Opportunity, summary: dict[str, Any], now: float) -> None:
-        digest = f"{opp.status.value}|{'|'.join(opp.reasons)}|{summary['best_ask']}"
+        # Non-actionable records (filtered/unsupported) are keyed on the normalised reason
+        # only and rewritten at most every `quiet_interval_s`, so price ticks on markets that
+        # never qualify do not flood the table. Actionable ones also track the best ask.
+        quiet = opp.status in (DecisionStatus.FILTERED, DecisionStatus.UNSUPPORTED)
+        reasons = "|".join(reason_key(r) for r in opp.reasons)
+        digest = f"{opp.status.value}|{reasons}" + ("" if quiet else f"|{summary['best_ask']}")
+        interval = self.quiet_interval_s if quiet else self.persist_interval_s
         last = self._written.get(opp.opportunity_id)
-        if last and last[0] == digest and now - last[1] < self.persist_interval_s:
+        if last and last[0] == digest and now - last[1] < interval:
             return
         self._written[opp.opportunity_id] = (digest, now)
         self._rows.append(

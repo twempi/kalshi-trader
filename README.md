@@ -1,15 +1,18 @@
 # kalshi-trader
 
-A locally hosted research and **paper-trading** platform for Kalshi tennis match-winner markets.
+A locally hosted, **multi-strategy** quantitative research and **paper-trading** platform for
+Kalshi prediction markets.
 
-It discovers live and upcoming tennis markets, streams their order books and live point-by-point
-scores, estimates each player's win probability with an explainable tennis model, and runs a
-fully automated **simulated** trading engine against real, live Kalshi prices. Everything it
-observes is recorded, so strategies can be replayed and evaluated later.
+It discovers markets, streams their order books (and, for tennis, live point-by-point scores),
+lets several independent strategies propose opportunities, evaluates every proposal at its
+*actual executable* size and cost, ranks them centrally, and executes the survivors in a
+**simulated** paper account against real, live Kalshi prices. Every observation and every
+decision (including every rejection and its reason) is recorded so strategies can be replayed,
+compared and either validated or rejected on evidence.
 
-The initial research question is whether, late in a match, the contract on the player who is
-about to win is **underpriced after fees and execution costs**. The platform is built to *test*
-that hypothesis, not to assume it.
+No strategy in this repository has demonstrated profitability. The platform exists to find out
+whether any can, without assuming it. Zero trades is an acceptable outcome when nothing clears
+the requirements.
 
 > **No real money.** The application never places real orders. The REST client refuses any
 > non-`GET` request (`ReadOnlyViolation`), no order endpoints exist in the code base, and a test
@@ -22,170 +25,213 @@ that hypothesis, not to assume it.
 
 1. [What works today](#what-works-today)
 2. [Architecture](#architecture)
-3. [How a trading decision is made](#how-a-trading-decision-is-made)
-4. [Installation on NixOS](#installation-on-nixos)
-5. [Configuration and API credentials](#configuration-and-api-credentials)
-6. [Running the application](#running-the-application)
-7. [The dashboard](#the-dashboard)
-8. [Starting, pausing and stopping paper trading](#starting-pausing-and-stopping-paper-trading)
-9. [Running continuously (systemd user service)](#running-continuously-systemd-user-service)
-10. [Running on a NixOS server (nix-inputs module)](#running-on-a-nixos-server-nix-inputs-module)
-11. [Backtesting](#backtesting)
-12. [Understanding the performance statistics](#understanding-the-performance-statistics)
-13. [Running the tests](#running-the-tests)
-14. [Logs and data files](#logs-and-data-files)
-15. [Data sources: free vs paid](#data-sources-free-vs-paid)
-16. [Known limitations and blockers](#known-limitations-and-blockers)
-17. [Results to date](#results-to-date)
-18. [Milestone status](#milestone-status)
-19. [Troubleshooting](#troubleshooting)
+3. [Strategies and operating modes](#strategies-and-operating-modes)
+4. [How opportunities are evaluated, ranked and allocated](#how-opportunities-are-evaluated-ranked-and-allocated)
+5. [The tennis probability model](#the-tennis-probability-model)
+6. [Installation on NixOS](#installation-on-nixos)
+7. [Configuration and API credentials](#configuration-and-api-credentials)
+8. [Running the application](#running-the-application)
+9. [The dashboard](#the-dashboard)
+10. [Starting, pausing and stopping paper trading](#starting-pausing-and-stopping-paper-trading)
+11. [Running continuously (systemd user service)](#running-continuously-systemd-user-service)
+12. [Running on a NixOS server (nix-inputs module)](#running-on-a-nixos-server-nix-inputs-module)
+13. [Backtesting and research](#backtesting-and-research)
+14. [Strategy evaluation and selection](#strategy-evaluation-and-selection)
+15. [Understanding the performance statistics](#understanding-the-performance-statistics)
+16. [Running the tests](#running-the-tests)
+17. [Logs and data files](#logs-and-data-files)
+18. [Data sources: free vs paid](#data-sources-free-vs-paid)
+19. [Known limitations and missing data](#known-limitations-and-missing-data)
+20. [Results to date](#results-to-date)
+21. [Milestone status](#milestone-status)
+22. [Troubleshooting](#troubleshooting)
 
 ---
 
 ## What works today
 
-Each item below was run against **real Kalshi data** on 2026-10-29 unless marked otherwise.
-
 | Capability | Status |
 | --- | --- |
-| Tennis market scanner (ATP, WTA, Challenger, ITF match-winner series) | Verified live: 39 matches / 78 markets discovered |
-| Order-book monitoring over REST (public, no credentials) | Verified live: 4-minute engine run, 0 failed requests |
-| Order-book monitoring over WebSocket (sequence checks, gap recovery, reconnects) | Tested against a local fake server only; needs an API key for the real feed |
-| Live scores from Kalshi's free Live Data API | Verified live: point-level scores parsed for the matches in progress |
-| Markov tennis model + uncertainty + EV after fees | Unit-tested; tracks market prices closely on live matches |
-| Late-match strategy and score-agnostic control strategy | Unit-tested; run live (no qualifying trade occurred during the test run) |
-| Paper broker: fills against real books, fees, partial fills, settlement | Unit-tested; engine cycle tested end-to-end with fakes |
-| Centralized risk manager, persistent emergency stop, auto-pause | Unit-tested; pause/stop/resume verified from the CLI on the real database and through the dashboard API in tests |
-| SQLite persistence (market/score snapshots, signals, orders, trades, equity) | Verified live: 793 market and 59 score snapshots recorded in 4 minutes |
-| Historical backtest on real Kalshi 1-minute candles | Run on real data (see [Results to date](#results-to-date)) |
-| Replay backtest on your own recorded data | Tested with synthetic recordings; needs recorded, settled matches to be meaningful |
-| Local web dashboard | Verified in a browser against live data |
-| systemd user service / Home Manager module | Provided as examples; **not installed** (that would touch files outside the project) |
-| NixOS service module (in [nix-inputs](https://github.com/twempi/nix-inputs)) | Tested in NixOS VMs on 2026-10-30: starts under systemd sandboxing, dashboard on localhost only, server CLI, graceful stop, and real Kalshi data recorded when the VM had internet. Not yet running on a real server |
+| Tennis market discovery (ATP, WTA, Challenger, ITF match-winner series) | Verified live 2026-11-02: 45 matches / 90 markets |
+| Generic event discovery for cross-market research (`GET /events?with_nested_markets`) | Implemented and unit-tested; opt-in per series (`strategies.cross_market.series_tickers`), not yet run live |
+| Order books over REST (public) / WebSocket (API key) | REST verified live; WebSocket tested against a local fake server only |
+| Live tennis scores (Kalshi Live Data) with freshness checks | Verified live; CDN `Age` header captured, out-of-order responses rejected |
+| Shared strategy framework (Opportunity, evaluator, risk, allocator, diagnostics) | Unit- and integration-tested; run live 2026-11-02 |
+| Strategy A/C `tennis_model` (statistical mispricing, all match stages) | Paper mode; run live, no qualifying opportunity yet |
+| Strategy B `cross_market` (verified settlement relationships, multi-leg) | Paper mode for tennis pairs; generic relationships unit-tested only |
+| Strategy D `market_making` | **Research simulation only** (pessimistic fill model); never paper capital |
+| Baselines: `late_match` (original rules), `price_threshold`, market-implied benchmark | `late_match` observe mode; `price_threshold` off by default; benchmark in model evaluation |
+| Per-strategy shadow ledgers + evidence-based strategy lifecycle | Unit-tested; run live |
+| Paper broker: book-walking fills, exact fees, partial fills, basket unwinds, settlement | Unit-tested with hand-checked numbers |
+| Event-driven replay with chronological settlement | Tested (capital-recycling scenario) and run on the recorded database |
+| Model evaluation vs market, sensitivity analysis | Implemented; current data (3 settled events) is far too small for conclusions |
+| Dashboard: overview, opportunities, strategies, diagnostics, research, markets, analytics, health | Verified in a browser against live-recorded data |
+| NixOS service module (nix-inputs) / systemd user unit | Unchanged; NixOS module tested in VMs earlier |
 
 ## Architecture
 
 ```
- Kalshi REST (public)          Kalshi WebSocket (API key)      Kalshi Live Data (public)
- discovery, order books,       order-book deltas,              point-by-point
- status, settlement            lifecycle events                tennis scores
-        │                              │                               │
-        ▼                              ▼                               ▼
- TennisDiscovery ──────────► MarketDataHub                       ScoreProvider
- (matches, markets)          (validated order books)             → MatchState (validated)
-        │                              │                               │
-        └──────────────────────────────┼───────────────────────────────┘
-                                       ▼
-                 WinProbabilityEstimator (Markov model + uncertainty)
-                                       ▼
-                 Strategies (late_match; price_threshold control)
-                                       ▼
-                 RiskManager ──► PaperBroker (simulated fills, fees, settlement)
-                                       ▼
-      SQLite (WAL): snapshots · signals · orders · trades · equity · health · safety flags
-                                       ▼
-                 Dashboard (FastAPI, 127.0.0.1) · CLI · backtests
+ Kalshi REST (public)         Kalshi WebSocket (API key)        Kalshi Live Data (public)
+ markets, events, books,      order-book deltas,                tennis scores
+ status, settlement           lifecycle events                  (+ HTTP Age of the cache)
+        │                             │                                 │
+        ▼                             ▼                                 ▼
+ TennisDiscovery / GenericDiscovery ─► MarketDataHub ◄──┐        TennisTracker
+ (tracked markets, related groups)    (valid books)    │   (regression guard, freshness,
+                                              │         │    pre-match prior, Markov model)
+                                              ▼         │                │
+                         ScanContext (one instant: markets, books, matches, groups)
+                                              ▼
+              Strategies ──► Opportunity proposals (candidates + filtered/unsupported notes)
+   tennis_model · cross_market · late_match · price_threshold     market_making (research sim)
+                                              ▼
+ TradingCore (shared by live engine and replay; clock injected)
+   market checks ─► portfolio checks ─► risk budget ─► ExecutionEvaluator ─► allocator rank
+   ─► re-check on current state ─► PaperBroker (main account)   +   per-strategy shadow ledgers
+                                              ▼
+ SQLite (WAL): snapshots · opportunities · diagnostics · predictions · orders · trades · equity
+               · strategy state · safety flags · backtest runs (with config, universe, ledger)
+                                              ▼
+                     Dashboard (FastAPI, 127.0.0.1) · CLI · replay · research
 ```
-
-All components run in one asyncio process (`kalshi-trader run`). The engine loops are
-independent: discovery (60 s), exchange status (30 s), order books, scores (5 s), settlement,
-strategy evaluation (1 s), recorder flush and equity snapshots. A failure in one loop is
-logged, counted and retried without taking down the others; repeated failures auto-pause
-paper trading.
 
 | Path | Responsibility |
 | --- | --- |
-| `src/kalshi_trader/api/` | Kalshi REST client (GET-only, retries, backoff, adaptive rate limit, pagination), WebSocket client (signed handshake, per-subscription sequence tracking, reconnects), request signing, validated response schemas |
-| `src/kalshi_trader/market_data/` | Market discovery, local order books (snapshot + delta), REST/WS ownership hand-off, pre-match price capture, recorder |
-| `src/kalshi_trader/tennis/` | Tennis scoring state machine, match-format inference, Kalshi Live Data parser |
-| `src/kalshi_trader/models/` | Hierarchical Markov model, Bayesian strength estimator, EV calculations |
-| `src/kalshi_trader/strategies/` | Strategy interface, late-match strategy, price-threshold control strategy |
-| `src/kalshi_trader/risk/` | All risk limits, sizing, safety state |
-| `src/kalshi_trader/execution/` | Fee formula, fill simulation, paper broker |
-| `src/kalshi_trader/database/` | SQLAlchemy tables, repository |
-| `src/kalshi_trader/backtesting/` | Historical (candles) and replay backtests, metrics, significance tests |
+| `src/kalshi_trader/core/opportunity.py` | Standard `Opportunity` / `Leg` / `FairValue` types and decision statuses |
+| `src/kalshi_trader/core/evaluator.py` | Execution-aware sizing: walks the book for the final size, exact fees, EV at the final fill, basket legging risk |
+| `src/kalshi_trader/core/allocator.py` | Ranking objective (documented below) |
+| `src/kalshi_trader/core/pipeline.py` | `TradingCore`: the single decision path, main + shadow ledgers, basket execution |
+| `src/kalshi_trader/core/registry.py` | Strategy lifecycle and evidence requirements |
+| `src/kalshi_trader/core/diagnostics.py` | Per-strategy outcome/reason counts and the opportunity log |
+| `src/kalshi_trader/core/tennis_tracker.py` | Tennis state shared by live and replay: freshness, regression guard, priors, estimates |
+| `src/kalshi_trader/strategies/` | `stat_mispricing.py` (A/C), `cross_market.py` (B), `market_making.py` (D), `late_match.py`, `price_threshold.py` |
+| `src/kalshi_trader/risk/manager.py` | Market/portfolio checks, exposure caps, risk budget, persistent safety state |
+| `src/kalshi_trader/execution/` | Fee formula, fill simulation, paper broker (main + shadow accounts) |
+| `src/kalshi_trader/backtesting/` | Replay (event-driven), historical price-only backtest, metrics, significance |
+| `src/kalshi_trader/research/` | Event/time splits, model evaluation vs market, sensitivity analysis |
+| `src/kalshi_trader/market_data/` | Tennis + generic discovery, order books, recorder, pre-match capture |
+| `src/kalshi_trader/api/`, `tennis/`, `models/` | Kalshi clients and schemas, tennis scoring and parsing, Markov model (unchanged design) |
+| `src/kalshi_trader/engine.py` | Async loops, task supervision/restart, settlement monitor |
 | `src/kalshi_trader/dashboard/` | FastAPI app and static front end (no external CDNs) |
-| `src/kalshi_trader/engine.py` | Orchestration of all loops, graceful shutdown |
-| `src/kalshi_trader/main.py` | Command-line interface |
-| `config/settings.toml` | All non-secret settings |
-| `deploy/` | Optional systemd user unit and Home Manager module |
 
-Market data and score feeds are treated as **untrusted input**. Tickers are validated against a
-strict pattern; prices must lie in `[0, 1]` and sizes must be non-negative. Malformed messages are
-rejected and counted, and duplicate WebSocket messages are dropped. A sequence gap, or a delta that
-would leave a price level negative, marks the affected books out of sync: REST polling covers
-them until a fresh WebSocket snapshot (requested automatically) arrives. Score payloads that are
-internally inconsistent (impossible point scores, unknown player ids, unknown server) are marked
-invalid and never reach a trading decision.
+All components run in one asyncio process (`kalshi-trader run`). Each loop survives its own
+errors; a supervisor restarts any background task that ends unexpectedly (with backoff), and
+repeated strategy/settlement errors auto-pause paper trading. Existing databases are migrated
+additively on start-up (new tables and nullable columns only).
 
-## How a trading decision is made
+Market data and score feeds are treated as **untrusted input**: tickers are validated, prices
+must lie in `[0, 1]`, sizes must be non-negative, malformed messages are rejected and counted,
+sequence gaps mark books out of sync until a fresh snapshot arrives, and internally inconsistent
+score payloads never reach a decision.
 
-The late-match strategy (`src/kalshi_trader/strategies/late_match.py`) only proposes a trade
-when **every** condition holds:
+## Strategies and operating modes
 
-1. **Fresh, valid data.** The order book is younger than `risk.max_market_data_age_s` (10 s),
-   the score is younger than `risk.max_score_data_age_s` (30 s), the match format is known,
-   the exchange and market are open.
-2. **Late in the match.** The model's favourite needs at most `max_games_from_victory` (3) games.
-3. **High model probability.** The point estimate is at least `min_model_prob` (0.90).
-4. **Tradeable price.** The executable YES ask is within `[min_price, max_price]`
-   (0.80–0.97) and the spread is at most `max_spread` (4¢).
-5. **Positive edge after costs, on a conservative probability:**
+Each strategy has a `mode` in `config/settings.toml`:
 
-   ```
-   EV per contract = p_conservative − (ask + fee per contract)  ≥  min_edge  (2¢)
-   ```
-
-**The probability model** (`src/kalshi_trader/models/`):
-
-- *Markov chain.* Exact recursion from point → game → tiebreak (with serve rotation) → set →
-  match, for best-of-3/5 with standard tiebreaks, 10-point final-set tiebreaks, advantage final
-  sets, and match tiebreaks. Its inputs are each player's probability of winning a point on serve.
-- *Player strength.* Serve probabilities are parameterised as `p1 = μ + δ/2`, `p2 = μ − δ/2`.
-  `μ` has a tour-level prior (e.g. ATP 0.64). `δ` is anchored on the **pre-match market price**
-  when one was captured (inverted through the same model) and is otherwise wide. The prior is
-  updated with the serve points observed in the match (sampling-importance-resampling).
-- *Uncertainty.* Posterior draws give a distribution of win probabilities. The strategy uses the
-  10th percentile (`credible_quantile`), not the mean.
-- *Latency guard.* The live score may lag the market. The conservative probability is the
-  minimum over every score reachable within `latency_points` (1) further points.
-- *Retirements.* A small per-game retirement hazard pulls probabilities towards ½.
-
-The dashboard's market table shows the market-implied probability, the model point estimate,
-and the conservative probability side by side so the difference is always visible.
-
-**Fees** follow Kalshi's published schedule and rounding rules:
-`fee = 0.07 × fee multiplier × contracts × P × (1 − P)` per order, where the series' fee
-multiplier comes from the API. The fee is rounded up to $0.000001, and the cash debit (cost plus
-fee) is rounded up to the cent. The maker rate (0.0175) is configured but unused, because simulated
-orders always take liquidity.
-
-**Execution simulation** (`src/kalshi_trader/execution/`): an immediate-or-cancel limit buy at
-most `limit_slippage` (1¢) above the ask, and never above the price at which EV would fall below
-`min_edge`. It walks the real displayed order book but assumes only
-`paper.displayed_liquidity_fraction` (50%) of the displayed size is actually available. Fills are
-whole contracts and can be partial. Positions are held to settlement by default
-(`paper.enable_exits = false`). Settlement uses Kalshi's own `result` / `settlement_value`.
-
-**Risk checks** (`src/kalshi_trader/risk/manager.py`) run on every signal:
-
-| Limit | Default |
+| Mode | Behaviour |
 | --- | --- |
-| Max stake per trade | 2% of equity and at most $25 |
-| Sizing | 10% fractional Kelly on the *conservative* probability, capped by the above |
-| Max daily loss (UTC day, mark-to-bid) | $50, then no new entries until the next UTC day |
-| Max drawdown from peak | 15%, then a **persistent emergency stop** |
-| Max simultaneous positions | 5 |
-| Min liquidity at the limit price | 10 contracts |
-| Max spread | 5¢ |
-| Max order-book / score age | 10 s / 30 s |
-| Max trades per market / per match | 1 / 1 |
-| Consecutive engine errors before auto-pause | 5 |
+| `off` | Not loaded |
+| `observe` | Scanned and fully evaluated (size, fees, risk) against the main account but ends as `observed`; trades only its own **shadow ledger** |
+| `paper` | Eligible for the **main paper account** through the central allocator (and also trades its shadow ledger) |
 
-Sizing depends only on current equity and the conservative edge. It **never** increases after a
-loss (no martingale, no loss chasing). Duplicate orders are prevented by a unique client order
-id per attempt plus an entry cooldown. Safety flags (paused, emergency stop) are stored in the
-database and survive restarts.
+| Strategy | What it does | Default | Status of the evidence |
+| --- | --- | --- | --- |
+| `tennis_model` (A/C) | Buys a tennis contract when the Markov model's **conservative** probability beats the full executable cost by `min_edge` after fees. Works at any configured stage: `early` (first set), `mid`, `late` (a player within 3 games of winning). `prematch` is always *unsupported*: the only pre-match information is the market price itself, which cannot prove the market wrong. Requires a pre-match price prior by default; other categories are reported as unsupported ("no independent probability model"). | `paper` | Unvalidated: model calibration vs market not yet measurable (see Results) |
+| `cross_market` (B) | Buys baskets whose combined payoff is fixed by **verifiable** settlement rules: tennis pairs (after the first ball), `mutually_exclusive` NO-baskets (pays ≥ N−1), exhaustive bracket YES-baskets (strict coverage check, no integer-outcome assumption), threshold ladders. Requires the mispricing to persist (2 scans, 2 s), includes fees for every leg, budgets legging risk, executes least-liquid leg first and unwinds excess legs into the bid. Never recorded as risk-free. | `paper` | No opportunity observed so far |
+| `late_match` (baseline 2) | The original late-match favourite rules, unchanged, for comparison | `observe` | Price-only version lost money historically |
+| `price_threshold` (baseline 1) | Buy the favourite when its ask is in a band; no model, not edge-gated | `off` | Lost money historically (see Results) |
+| market-implied benchmark (baseline 3) | Market mid used as a probability forecast; every model is scored against it | always on in evaluation | – |
+| `market_making` (D) | Hypothetical one-tick-improved quotes on wide markets; simulated maker fills only when the market trades **through** the quote; maker fee always charged; inventory limits; adverse selection measured. **Cannot** be set to `paper`. | `observe` (research) | Insufficient data; fill model is deliberately pessimistic |
+
+Change modes in `config/settings.toml` or from the environment, e.g.
+`KT_STRATEGIES__LATE_MATCH__MODE=paper`. Changing a strategy's parameters changes its version
+tag (`version+confighash`), which resets its evidence status: results earned under different
+rules never count. Operators can also pause/resume a single strategy at runtime (persisted):
+
+```bash
+uv run kalshi-trader strategies                      # modes, statuses, evidence
+uv run kalshi-trader strategies pause tennis_model   # stop main-account entries for one strategy
+uv run kalshi-trader strategies resume tennis_model
+```
+
+## How opportunities are evaluated, ranked and allocated
+
+Every proposal passes, in order (`core/pipeline.py`):
+
+1. **Strategy filters.** Failures are kept as `filtered` / `unsupported` with the reason.
+2. **Market checks** per leg (`risk/manager.py`): exchange and market open, order book younger
+   than 10 s, for score strategies a score younger than 30 s **including the source's cache age**
+   (HTTP `Age`, or 10 s when unknown), score not frozen for > 300 s, market mid not moved > 10¢
+   since the last score change, no score-feed anomaly; spread ≤ 5¢, ≥ 10 contracts at the limit,
+   trade-count limits per market/event, not already exposed to the event.
+3. **Portfolio checks**: emergency stop, operator pause, max open positions, daily loss, drawdown.
+4. **Risk budget**: the maximum *loss* this trade may add = the smallest of per-trade cap
+   (2% of equity, ≤ $25), cash, and the remaining headroom of the aggregate (30%), per-event (3%),
+   per-strategy (15%) and correlation-group (8%; same tournament or series) caps. Exposure is
+   always measured as **maximum possible loss**, not win probability.
+5. **Execution evaluator** (`core/evaluator.py`): finds the largest whole-contract order that fits
+   the budget (× 0.25 for strategies without validated evidence), fits 10% fractional Kelly on
+   the conservative probability at the *actual* average cost, is fillable from displayed depth
+   (× 50% liquidity haircut) within the limit price, and still clears `min_edge` **after** the
+   walked average price and the exact Kalshi fee for that order size:
+
+   ```
+   expected_profit_low = n × q_low − (walked notional + fees)    must be ≥ n × min_edge
+   expected_profit     = n × p     − (walked notional + fees)
+   max_loss            = notional + fees                          (directional)
+   baskets: guaranteed = n × G − Σ legs (notional + fees);  max_loss = max(0, −guaranteed, legging risk)
+   ```
+
+   NO contracts use the complementary probability (NO on player A pays when player B wins).
+6. **Ranking** (`core/allocator.py`). Objective: maximise total conservative expected profit
+   subject to the capital and exposure caps. With one binding capital constraint this is a
+   knapsack whose LP relaxation is solved exactly by ordering items by value per unit of
+   capital, so candidates are ranked by `expected_profit_low / max_loss`. Uncertainty enters
+   through `q_low` (a wider posterior lowers it) and evidence through the size multiplier; no
+   arbitrary weighted score is used. Baselines (not edge-gated) rank after edge-gated
+   candidates.
+7. **Allocation**: in rank order, each candidate is re-checked and re-sized against the account
+   *as it is after earlier allocations in the same cycle*, on the current book, immediately
+   before simulated execution. Two correlated candidates on one event cannot both take capital.
+
+Each order has a deterministic client order id with a database UNIQUE constraint, plus
+trade-count limits and a cooldown, so restarts and repeated signals cannot duplicate positions.
+Sizing depends only on current equity, exposure and edge: there is **no** martingale, revenge
+trading or loss chasing. Daily-loss and drawdown limits block *new* entries; they are **not** a
+loss ceiling, because positions already open can still lose their full cost.
+
+**Fees** follow Kalshi's schedule and rounding: `0.07 × multiplier × C × P × (1 − P)` per
+order, rounded up to $0.000001, cash debit rounded up to the cent (so small orders pay more per
+contract). Event-level fee overrides are read for generic events. The maker fee
+(`0.0175 × …`) is used only by the market-making research simulation.
+
+**Paper execution**: IOC limit orders walk the real displayed book, take whole contracts, can
+fill partially, and update cash, orders and trades in one transaction. Each trade stores its
+ex-ante expected P&L *at the actual fill*, maximum loss and slippage versus the best ask, so
+expected and realised results can be compared. Multi-leg baskets: legs after the first may only
+take `paper.basket_later_leg_liquidity_fraction` (50%) of their displayed depth, because real
+books move between legs; mismatched legs are unwound into the bid and anything unsellable keeps
+its full cost as maximum loss. Settlement uses Kalshi's own `result` / `settlement_value`.
+
+## The tennis probability model
+
+Unchanged in design (`src/kalshi_trader/models/`), now with explicit validation tooling:
+
+- *Markov chain*: exact recursion point → game → tiebreak → set → match for all common formats.
+- *Player strength*: `p1 = μ + δ/2`, `p2 = μ − δ/2`; `μ` from tour-level serve priors; `δ`
+  anchored on the **pre-match market price** (captured live ≥ 60 s before the first live score,
+  or backfilled from public candles that predate it), updated with in-match serve points.
+- *Uncertainty*: posterior draws; decisions use the 10th percentile, minimised over all scores
+  reachable within `latency_points` (1) further points (latency guard).
+- *Retirements*: a small per-game hazard pulls probabilities toward ½.
+
+The independent information versus the live market is the in-play state (score, server, serve
+statistics) propagated through the Markov chain; the market enters only through the pre-match
+prior. Whether that adds accuracy over the live market is an **open empirical question**; the
+model is not described as accurate. `kalshi-trader research model-eval` and
+`research sensitivity` measure calibration, Brier score and log loss overall and by stage, tour
+and probability band, always against the market-implied benchmark, plus sensitivity to serve
+priors, prior width, retirement hazard, latency guard and stale (delayed) scores.
 
 ## Installation on NixOS
 
@@ -266,12 +312,19 @@ uv run kalshi-trader scan                 # one-shot table of live + upcoming te
 uv run kalshi-trader scan --live-only     # only matches in progress (score, prices, model)
 uv run kalshi-trader scan --json          # machine-readable
 
-uv run kalshi-trader run                  # engine: record data + paper trade + dashboard
-uv run kalshi-trader run --record-only    # record data + dashboard, never simulate trades
+uv run kalshi-trader run                  # engine: record data + all strategies + dashboard
+uv run kalshi-trader run --record-only    # record + evaluate strategies, never simulate any trade
 uv run kalshi-trader run --no-dashboard   # engine without the web server
 
 uv run kalshi-trader dashboard            # dashboard only (reads the database)
-uv run kalshi-trader status               # account, safety state, component health, row counts
+uv run kalshi-trader status               # account, safety state, strategies, health, row counts
+uv run kalshi-trader strategies           # strategy modes, evidence status, version tags
+uv run kalshi-trader diagnostics          # why each strategy is (not) trading today, by reason
+
+uv run kalshi-trader backtest replay      # event-driven replay of your recordings (see below)
+uv run kalshi-trader research model-eval --source live    # forward model vs market calibration
+uv run kalshi-trader research model-eval --source replay  # same, on replayed recordings
+uv run kalshi-trader research sensitivity                 # assumption sensitivity (slow: ~12 replays)
 ```
 
 Stop `run` with `Ctrl+C` (SIGINT) or SIGTERM. Shutdown is graceful: loops stop, the recorder
@@ -288,13 +341,20 @@ Start `uv run kalshi-trader run` (or `uv run kalshi-trader dashboard`) and open
 
 | Tab | Contents |
 | --- | --- |
-| Overview | Simulated equity, total and daily P&L, open positions, completed trades, win rate, equity chart, recent activity (paper fills, settlements, operator actions, warnings) |
+| Overview | Simulated equity, total / realised / unrealised / daily P&L, drawdown, available capital, open positions, active strategies, system health, equity chart, recent activity |
+| Opportunities | Scanner of every opportunity evaluated in the last 15 minutes: strategy and mode, market or basket legs, bid/ask, fair value (conservative), size and average fill, fees, expected net profit, expected return on capital, maximum risk, data ages, decision status and rejection reason. Filter by strategy, status and category |
+| Strategies | Strategy comparison (main account vs standalone shadow ledgers: P&L, trades, win rate, profit factor, drawdown, capital in use, fees, expected vs realised, evidence status, today's outcome counts) with per-strategy Pause/Resume, and exposure by strategy/event/correlation group against the caps |
+| Why no trades? | Today's outcome counts and most common normalised rejection reasons per strategy, plus the last one-second cycle |
+| Research | Forward model-vs-market calibration (event-weighted Brier, log loss, reliability chart, by stage) and the market-making research simulation (hypothetical quote cycles vs simulated fills, adverse selection, P&L) |
 | Live tennis markets | One row per player contract: score, server, games to win, bid/ask, spread, depth, market vs model vs robust-low probability, conservative EV, flagged opportunities, data age. Filter by text, tour, live matches, opportunities; sort by EV, match progress, price, liquidity or start time |
-| Trading activity | Open positions, cumulative P&L, completed simulated trades (timestamp, market, player, score at entry, price, model probability, EV, size, cost, fees, result, P&L) with CSV export, and every strategy signal with the risk manager's decision and reasons |
+| Trading activity | Main-account open positions, cumulative P&L, completed simulated trades with CSV export, and recent decisions that reached the risk/allocation stage |
 | Analytics | Equity curve, P&L over time, drawdown, win rate by entry price vs break-even, outcome distribution, performance by strategy, a "skill or luck?" significance panel, stored backtest runs |
 | System health | Recorded-data counts and per-component status (Kalshi REST and WebSocket, score feed, exchange status, engine loops): last update and success, last error, details such as request counts, failures and latency; components that stop updating are marked stale. Recent warnings and errors |
 
-Every chart has a "Table view" toggle. Light and dark themes are supported.
+Every chart has a "Table view" toggle. Light and dark themes are supported. Data kinds are kept
+apart everywhere: `live_paper` (main account, simulated fills on real books), `shadow`
+(per-strategy ledgers), `replay` (backtests), research simulations, and synthetic test data
+(tests only, never displayed as results).
 
 The header has **Pause / Resume / Emergency stop / Clear stop** buttons. They work from this
 machine and, if you use Tailscale (below), from devices on your tailnet. Every request must carry
@@ -350,8 +410,9 @@ uv run kalshi-trader export --out paper_trades.csv     # export simulated trades
 uv run kalshi-trader reset-account --yes               # wipe simulated history, restore bankroll
 ```
 
-The same controls are on the dashboard. A paused engine keeps recording data and settling
-existing positions. The emergency stop is also triggered automatically when the drawdown limit
+The same controls are on the dashboard. A paused engine keeps recording data, evaluating
+strategies (shadow ledgers keep running) and settling existing positions. Individual strategies
+are paused with `uv run kalshi-trader strategies pause <name>` or the Strategies tab. The emergency stop is also triggered automatically when the drawdown limit
 is hit. Change the bankroll with `KT_PAPER__STARTING_BALANCE` before the first run, or with
 `reset-account` afterwards.
 
@@ -464,52 +525,88 @@ sudo systemctl start kalshi-trader
 2. In nix-inputs: `nix flake update kalshi-trader-src`, then commit and push.
 3. In the system flake: `nix flake update twempi`, then rebuild the server.
 
-## Backtesting
+## Backtesting and research
 
-Two kinds of backtest are provided. Neither fabricates data: if the data does not exist, they
-say so and stop.
+Nothing here fabricates data: when the data does not exist, the tools say so.
 
 ### 1. Historical, price-only (real Kalshi candles)
 
-Kalshi does not publish historical scores, so the late-match *model* strategy cannot be backtested
-on history. What can be tested on history is its price-only core: "buy the favourite when its ask
-enters a price band during play". That tests directly whether high-priced tennis contracts have
-been underpriced after fees.
+Kalshi does not publish historical scores, so score-aware strategies cannot be backtested on
+history. What can be tested is the price-only favourite baseline: "buy the favourite when its
+ask enters a price band during play".
 
 ```bash
 uv run kalshi-trader backtest historical --days 30 --max-events 400 \
     --cache-dir data/cache/historical
-uv run kalshi-trader backtest historical --days 30 --min-price 0.85 --max-price 0.95 \
-    --series KXATPMATCH KXWTAMATCH --cache-dir data/cache/historical
 ```
 
-- Data: 1-minute YES bid/ask candles for settled match-winner markets. The match start comes from
-  Kalshi's milestone `start_date`. Market `occurrence_datetime` is the *expected expiration* and
-  is never used as a start time.
-- No look-ahead: a decision only sees closed candles. The fill is at the **next** minute's opening
-  ask (a one-minute latency); if that ask has left the band, there is no fill. Nothing after the
-  market's close is fillable, and the outcome is used only to compute P&L.
-- One entry per match, 10 contracts, taker fees, spread ≤ 3¢.
-- Chronological out-of-sample split (`--test-fraction`, default 0.3). A sweep of six price bands
-  is reported for train and test separately; a band chosen in-sample is evaluated once out of
-  sample.
-- Results are printed as JSON and stored, labelled with their data source, in the dashboard's
-  "Backtest runs" table. Downloads are cached in `--cache-dir`, so re-runs are reproducible
-  and fast.
+Decisions see only closed 1-minute candles, fills use the **next** minute's opening ask, nothing
+after market close is fillable, one entry per match, 10 contracts, taker fees, chronological
+out-of-sample split. Limitations: no depth data and minute granularity.
 
-### 2. Replay of your own recordings (score-aware)
+### 2. Event-driven replay of your recordings (all strategies)
 
-`kalshi-trader run` (or `run --record-only`) records order books and scores. A replay feeds
-those recordings, in time order, through the **same** estimator, strategy, risk manager and paper
-broker used live.
+`kalshi-trader run` (or `run --record-only`) records order books and scores. The replay merges
+book snapshots, score snapshots **and market settlements** into one chronological stream and runs
+the **same** `TennisTracker` + `TradingCore` used live, with a simulated clock:
+
+- positions settle when their result became known, so cash, equity, open positions, exposure,
+  daily-loss and drawdown limits reflect the simulated state at every moment;
+- market status comes from the recorded snapshots and nothing trades after close;
+- a recorded book/score counts as continuously confirmed until its next record only if the gap
+  is within the recorder heartbeat, otherwise it ages exactly like stale live data;
+- pre-match priors are captured from replayed books before the first live score; stored priors
+  are used only if observed before it (no in-play leakage);
+- events (not observations) are split chronologically into train / validation / test with an
+  embargo, so one match never appears in two groups.
 
 ```bash
-uv run kalshi-trader backtest replay                 # current config, train/test split
-uv run kalshi-trader backtest replay --grid          # 27-config sweep (edge, games, latency)
+uv run kalshi-trader backtest replay                       # train / validation / test
+uv run kalshi-trader backtest replay --no-test             # keep the test split untouched
+uv run kalshi-trader backtest replay --grid                # choose params on VALIDATION only
+uv run kalshi-trader backtest replay --embargo-hours 0 --market-making
 ```
 
-It needs recorded matches that have since settled. Start recording as early as possible: weeks
-of recordings are needed for meaningful sample sizes.
+The report shows the main account, every shadow ledger, model evaluation vs market, the
+diagnostics and the split sizes. Every run is stored with its full configuration, market
+universe, input fingerprint, code version and trade ledger (`backtest_runs`), and the report
+warns how many times the test split has already been evaluated on the same data, so repeated
+peeking is visible. Results need recorded matches that have since **settled**; weeks of
+recordings are required for meaningful sample sizes.
+
+### 3. Model evaluation and sensitivity
+
+```bash
+uv run kalshi-trader research model-eval --source live     # forward predictions (model_predictions table)
+uv run kalshi-trader research model-eval --source replay
+uv run kalshi-trader research sensitivity
+```
+
+Statistics are event-weighted (each match counts once; the two complementary markets of a
+match are not double-counted) and reported next to the market-implied benchmark, with a
+cluster-bootstrap CI of the paired Brier difference. Fewer than 30 settled events are flagged
+as insufficient.
+
+## Strategy evaluation and selection
+
+Each strategy's status (`kalshi-trader strategies`, Strategies tab):
+
+| Status | Meaning |
+| --- | --- |
+| `experimental` | New, or its rules changed (version or config hash); no evidence |
+| `collecting_data` | Observe mode, accumulating forward shadow-ledger results |
+| `ready_for_paper` | Forward evidence meets every requirement; an operator *may* set `mode = "paper"` (never automatic) |
+| `paper_trading` | `mode = "paper"`; sized at `risk.unvalidated_size_multiplier` (25%) until validated |
+| `paused` | Paused by an operator (persists) |
+| `rejected` | Forward evidence significantly negative; main-account entries blocked until the rules change |
+
+Evidence = settled trades in the strategy's shadow ledger under its current version tag
+(genuinely out-of-sample: nothing was tuned on them). Requirements (`[evidence]`): ≥ 50 trades
+across ≥ 30 independent events, calibration-null p ≤ 0.05, cluster-bootstrap CI of mean P&L
+above zero, drawdown ≤ 20%. Backtests never change a status, so a strategy cannot be enabled
+because it looked good in historical optimisation. Metrics reported per strategy: net P&L,
+return on capital, EV per trade, average winner/loser, win rate, profit factor, max drawdown,
+capital utilisation, fees, slippage, trade count, expected vs realised P&L, significance.
 
 ## Understanding the performance statistics
 
@@ -552,7 +649,17 @@ uv run pytest -m live       # opt-in smoke tests against the real Kalshi API (ne
 uv run ruff check src tests && uv run ruff format --check src tests
 ```
 
-The suite covers API parsing (with **real captured Kalshi responses** in `tests/fixtures/`),
+Highlights of what is verified (all with synthetic data unless noted): execution-aware EV
+with hand-checked numbers against an independent fee implementation (multi-level walks, per-order
+fee rounding, edges that vanish after fees), risk budgets under aggregate/event/strategy/
+correlated caps, allocation of correlated same-event opportunities, ranking under a binding
+position limit, observe vs paper modes, restart duplicate prevention, basket legging failures
+and unwinds, cross-market relationship verification (bracket gaps, MECNET, ladders, tennis
+pairs + persistence), market-making trade-through fills, score regression/staleness guards,
+event splits, event-weighted calibration, schema migration, and a replay where chronological
+settlement recycles capital that end-of-replay settlement would have blocked.
+
+The suite also covers API parsing (with **real captured Kalshi responses** in `tests/fixtures/`),
 ticker validation, request signing, retries and rate limiting, WebSocket sequence gaps and
 reconnects (against a local fake server), the tennis state machine and format inference, the Markov
 model (including a martingale consistency check), EV and fees, sizing, fill simulation, settlement,
@@ -564,7 +671,7 @@ is synthetic and is never shown as trading results.
 
 | Path | Contents |
 | --- | --- |
-| `data/kalshi_trader.db` | SQLite database (WAL): markets, events, snapshots, signals, simulated orders and trades, equity, safety state, health, backtest runs |
+| `data/kalshi_trader.db` | SQLite database (WAL): markets, events, snapshots, opportunities and rejection reasons, daily diagnostics, model predictions, simulated orders and trades (main + shadow accounts), equity, strategy state and history, safety state, health, market-making research fills, backtest runs (with config, universe and ledger) |
 | `data/logs/kalshi-trader.jsonl` | Structured JSON logs from `kalshi-trader run`, rotated at 20 MB × 10 files (one-shot commands such as `scan` and `backtest` log to the console only) |
 | `data/cache/` | Optional backtest download cache |
 
@@ -604,35 +711,46 @@ None is required. Scraping sites in breach of their terms is deliberately not do
 **Not used, possibly useful:** Jeff Sackmann's ATP/WTA point and match datasets (free, CC BY-NC-SA
 4.0, non-commercial) could provide player-specific serve priors in future.
 
-## Known limitations and blockers
+## Known limitations and missing data
 
-- **Score latency is the central risk.** Market makers with faster data can react before the
-  Kalshi score feed updates. An apparent late-match "edge" may just be the market already knowing
-  the next point. The latency guard and conservative quantile reduce, but cannot remove, this risk.
-- **No historical scores.** The score-aware strategy can only be evaluated on data recorded by
-  this application going forward. The historical backtest is price-only.
-- **Tour-level priors.** There are no player-specific serve statistics. The pre-match market
-  price is the main source of player strength, so matches discovered after they started (with no
-  pre-match price) get wider uncertainty and rarely qualify.
-- **Match format** is inferred from the tournament, gender and Kalshi's scoring-type field.
-  Unknown formats are never traded.
-- **Fill realism.** Simulated IOC orders take displayed liquidity with a 50% haircut. They do not
-  model queue position, hidden liquidity, or other traders reacting to the same information.
-  Real fills could be worse.
-- **Fees** use Kalshi's published taker formula and the API's per-series fee multiplier. Check the
-  current fee schedule before relying on small edges.
-- **WebSocket feed** is implemented and tested against a fake server, but has not been exercised
-  against Kalshi's real WebSocket (no API key was available). Without a key the engine polls
-  order books over REST every 3 s.
-- **Weekly exchange maintenance** (Thursday early morning ET) and unscheduled pauses are detected
-  through the exchange-status endpoint, and no simulated entries are made while the exchange is
-  inactive.
-- **Single machine.** SQLite and one process.
+- **Not enough settled, recorded data.** As of 2026-11-02 the database holds about 9 hours of
+  recordings with 6 settled markets (3 settled matches with model predictions). No statistical
+  claim about any strategy or about the model is possible yet. Run the engine for weeks.
+- **Score latency remains the central risk** for the tennis model. The CDN age, frozen-score,
+  regression and market-moved guards reduce it; they cannot remove it. Kalshi's live data has no
+  source timestamp, so the true source age is unknowable (the HTTP `Age` header is a lower bound).
+- **No independent probability models outside tennis.** Other categories are marked
+  `unsupported` rather than guessed. Pre-match tennis is unsupported for the same reason.
+- **Cross-market residual risks**: voided markets or fair-price settlements can pay other than
+  0/1; legging is stressed but simulated on one book snapshot per leg; generic bracket and
+  ladder relationships have only been unit-tested (no series configured by default).
+- **Market making cannot be simulated credibly** from public books: queue position and trades at
+  our price are unobservable, so fills are only counted when the market trades through the quote
+  (pessimistic, adverse-selection-heavy). It stays research-only.
+- **Paper fills are not validated against real fills** (no real orders exist). They take
+  displayed liquidity with a 50% haircut and ignore hidden liquidity and other traders.
+- **Replay fidelity**: market metadata (fee multiplier, tick size) is the latest recorded value;
+  recorded depth is limited to the configured top levels; periods when the engine was off are
+  missing.
+- **Fees**: Kalshi's published taker formula with API multipliers and event overrides; `flat`
+  fee-type series are not modelled specially. Check the current schedule before trusting small edges.
+- **WebSocket** implemented and tested against a fake server only (no API key available).
+- **Single machine**, SQLite, one process.
 
 ## Results to date
 
-**Paper trading:** no simulated trades yet. The engine has only run for short verification
-sessions, and no contract passed the late-match strategy's conservative-edge test during them.
+**Paper trading (main account and shadow ledgers):** no simulated trades yet. In a 2.5-minute
+live verification run on 2026-11-02 (3 matches in progress), every opportunity was evaluated
+and none cleared its requirements: the tennis model's best conservative edge stayed below 3¢
+after fees, tennis pairs never crossed after fees, and the late-match baseline's leader
+probabilities were below 0.90.
+
+**Replay of all recordings (2026-11-02, 67 events, embargo 0):** 0 trades in every split and
+every ledger; 5–8 out-of-order score responses per split were rejected; the most frequent
+rejection reasons were insufficient conservative edge, prices outside bands, and (new) the
+market moving ≥ 10¢ without a score change. Model vs market on the 3 settled events: Brier
+0.0176 (model) vs 0.0151 (market mid), i.e. the market was more accurate, but 3 events cannot
+support any conclusion.
 
 **Historical price-only backtest on real Kalshi data** (run 2026-10-29):
 
@@ -680,12 +798,32 @@ publishes no historical scores. That needs weeks of recordings (`kalshi-trader r
 
 | Milestone | Status |
 | --- | --- |
-| 1. Project foundation: Git, Nix flake, uv, configuration, logging, structure | Done |
-| 2. Kalshi integration: discovery, live prices, real-time updates, storage, real data | Done (WebSocket verified against a fake server only) |
-| 3. Paper trading: account, positions, fees, execution, risk, persistent history | Done |
-| 4. Tennis analytics: live scores, late-match strategy, probability, EV, signals | Done |
-| 5. Dashboard: real market data, paper performance, opportunities, analytics, health | Done |
-| 6. Backtesting and reliability: replay, reproducible evaluations, recovery, NixOS service, tests, docs | Done. Replay awaits recorded data; NixOS module tested in VMs, not yet deployed |
+| 1. Review of the existing implementation and audit findings | Done (findings 1–6 fixed; 7–10 are data/evidence gaps, documented) |
+| 2. Correctness repairs: replay, execution-cost EV, data freshness, accounting | Done |
+| 3. Shared strategy framework, diagnostics, central risk allocation | Done |
+| 4. Statistical mispricing (`tennis_model`) | Done for tennis; other categories correctly *unsupported* |
+| 5. Cross-market inconsistencies | Done (tennis pairs live in paper mode; generic relationships unit-tested, no series configured) |
+| 6. Tennis strategy improvements: stages, tours, bands, validation tooling | Done; validation awaits settled data |
+| 7. Market making | Research simulation only (data cannot support credible maker fills) |
+| 8. Baselines | Done (`late_match`, `price_threshold`, market-implied benchmark) |
+| 9. Multi-strategy paper execution through the allocator | Done |
+| 10. Dashboard and analytics | Done |
+| 11. Validation: tests, live integration run, documentation | Done; profitability **not** demonstrated |
+
+### Audit findings
+
+| # | Finding | Resolution |
+| --- | --- | --- |
+| 1 | Replay settled positions only at the end | Fixed: chronological event stream; test proves capital recycling |
+| 2 | Replay did not reproduce live risk/lifecycle | Fixed: replay runs `TradingCore` + `TennisTracker`; recorded status, close times, marks, day limits |
+| 3 | Locally fresh responses could hold stale scores | Mitigated: HTTP `Age`/assumed cache age added, regressions rejected, frozen-score and market-moved guards |
+| 4 | EV computed for a hypothetical 10-contract order | Fixed: EV, fees and Kelly at the final simulated fill |
+| 5 | Filter failures were not recorded | Fixed: every opportunity outcome + reason counted and logged |
+| 6 | Metadata/priors not as known at decision time | Fixed for priors (observation time must predate the first live score) and status; fee/tick metadata documented as latest-known |
+| 7 | Paper fills not validated against real fills | Open (impossible without real orders); conservative assumptions documented |
+| 8 | No profitable forward paper trading | Open; forward shadow ledgers now collect the evidence |
+| 9 | −$238 over 1,406 price-only trades | Confirmed; the price-band baseline stays off / observe |
+| 10 | Model accuracy beyond market unproven | Open; forward predictions now recorded and scored against the market |
 
 ## Troubleshooting
 
@@ -697,6 +835,6 @@ publishes no historical scores. That needs weeks of recordings (`kalshi-trader r
 | Dashboard port in use | `KT_DASHBOARD__PORT=8790 uv run kalshi-trader run` |
 | "kalshi_ws disabled" on the health tab | Expected without API credentials; REST polling is used |
 | No live matches in `scan --live-only` | Tennis is seasonal and time-zone dependent; try `scan` for upcoming matches |
-| Trading never happens | Usually correct behaviour. The markets tab shows the conservative EV of every contract (mostly negative); the signals table lists every proposal the risk manager rejected, with reasons (stale data, spread, liquidity, limits) |
+| Trading never happens | Usually correct behaviour. Open the **Why no trades?** tab or run `kalshi-trader diagnostics`: every evaluated opportunity is counted with its rejection reason. Check `kalshi-trader strategies` for modes (`observe` never uses the main account) |
 | Many `kalshi_request_retry ... status=429` log lines | Another process (e.g. a backtest) is sharing the request budget. The client halves its rate and retries automatically |
 | `https://kalshi-trader.<tailnet>.ts.net:8787` does not load | `systemctl status kalshi-trader tailscale-serve-kalshi-trader` on the server, and check that the service is defined and the host approved in the Tailscale admin console |

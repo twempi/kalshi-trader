@@ -131,6 +131,7 @@ class Opportunity:
     edge_gated: bool = True  # baselines are not gated on (model) edge
     requires_score: bool = False
     correlation_group: str | None = None
+    max_contracts: Decimal | None = None  # strategy-level size cap (contracts / basket units)
     provenance: dict[str, Any] = field(default_factory=dict)
     book_age_s: float | None = None
     score_age_s: float | None = None

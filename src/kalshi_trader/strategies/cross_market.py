@@ -357,6 +357,7 @@ class CrossMarketStrategy(Strategy):
             edge_gated=True,
             requires_score=False,
             correlation_group=f"{group.category}:{group.series_ticker}",
+            max_contracts=Decimal(self.settings.max_units),
             book_age_s=max((a for a in ages if a is not None), default=None),
             provenance={
                 "relationship": rel.kind,

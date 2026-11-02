@@ -245,6 +245,7 @@ class TradingCore:
                 equity=max(ZERO, snap.equity),
                 kelly_fraction=self.settings.risk.kelly_fraction,
                 size_multiplier=multiplier,
+                max_contracts=opp.max_contracts,
             ),
         )
         if opp.status == DecisionStatus.CANDIDATE:

@@ -54,40 +54,99 @@ ITF_WOMEN = 0.545
 
 [strategies]
 evaluation_interval_s = 1.0
+# Every strategy that is not "off" also trades its own standalone SHADOW ledger, so all
+# strategies are compared on identical observations with identical risk rules.
+shadow_ledgers = true
+entry_cooldown_s = 30.0
 
-[strategies.late_match]
-enabled = true
+# mode: "off" (not loaded) | "observe" (evaluated + shadow ledger, never main capital)
+#       | "paper" (eligible for the main paper account via the central allocator).
+# Nothing can place a real order in any mode.
+
+[strategies.tennis_model]        # A/C: statistical mispricing with the tennis Markov model
+mode = "paper"
+stages = ["early", "mid", "late"]   # "prematch" is always reported unsupported (no independent prior)
+tours = []                           # empty = all; e.g. ["ATP", "WTA"]
+min_price = 0.05
+max_price = 0.95
+min_edge = 0.03                     # $/contract after fees, at the final fill, conservative probability
+max_spread = 0.04
+limit_slippage = 0.02
+late_games_from_victory = 3
+require_pre_match_prior = true
+min_effective_sample_size = 50
+
+[strategies.cross_market]        # B: baskets with verified settlement relationships
+mode = "paper"
+min_edge = 0.01                  # $/basket unit after all fees
+include_tennis_pairs = true
+series_tickers = []              # extra non-tennis series to scan, e.g. ["KXHIGHNY"]
+refresh_interval_s = 300
+max_legs = 12
+max_book_age_s = 5
+min_persistence_s = 2
+min_persistence_scans = 2
+max_units = 50
+
+[strategies.late_match]          # Baseline 2: the original late-match rules, unchanged
+mode = "observe"
 min_price = 0.80
 max_price = 0.97
 min_model_prob = 0.90
-min_edge = 0.02                 # $ per contract after fees, on the conservative probability
+min_edge = 0.02
 max_games_from_victory = 3
 require_deciding_set = false
 max_spread = 0.04
 limit_slippage = 0.01
 
-[strategies.price_threshold]     # score-agnostic control strategy
-enabled = false
+[strategies.price_threshold]     # Baseline 1: favourites in a price band (no model)
+mode = "off"
 min_price = 0.90
 max_price = 0.97
 max_spread = 0.03
 limit_slippage = 0.00
 require_live_match = true
 
+[strategies.market_making]       # D: research simulation only ("off" or "observe")
+mode = "observe"
+min_spread = 0.04
+quote_size = 10
+max_inventory = 50
+min_price = 0.10
+max_price = 0.90
+adverse_horizon_s = 60
+max_book_age_s = 10
+
 [risk]
-max_fraction_per_trade = 0.02   # of current equity
+max_fraction_per_trade = 0.02   # max loss of one trade, as a share of current equity
 max_position_cost = 25          # dollars
+# Daily loss and drawdown limits block NEW entries; open positions can still lose their cost.
 max_daily_loss = 50             # dollars (UTC day, mark-to-bid)
 max_drawdown_fraction = 0.15    # triggers the persistent emergency stop
 max_open_positions = 5
+max_aggregate_exposure_fraction = 0.30    # total open max loss / equity
+max_event_exposure_fraction = 0.03        # per underlying event
+max_strategy_exposure_fraction = 0.15
+max_correlated_exposure_fraction = 0.08   # per tournament (tennis) / series (other)
 min_liquidity_contracts = 10
 max_spread = 0.05
 max_market_data_age_s = 10
-max_score_data_age_s = 30
+max_score_data_age_s = 30       # includes the score source's cache age
+score_source_staleness_s = 10   # assumed CDN cache age when the HTTP Age header is absent
+max_score_unchanged_s = 300
+max_mid_move_since_score_change = 0.10
 max_trades_per_market = 1
 max_trades_per_event = 1
 kelly_fraction = 0.10
+unvalidated_size_multiplier = 0.25   # strategies without validated forward evidence
 max_consecutive_errors = 5
+
+[evidence]                       # what a strategy must show (forward, out-of-sample) to be "validated"
+min_out_of_sample_trades = 50
+min_out_of_sample_events = 30
+max_calibration_pvalue = 0.05
+require_positive_ci = true
+max_drawdown_fraction = 0.20
 
 [fees]
 taker_rate = 0.07
@@ -96,6 +155,7 @@ maker_rate = 0.0175
 [paper]
 starting_balance = 1000
 displayed_liquidity_fraction = 0.5
+basket_later_leg_liquidity_fraction = 0.5   # legging stress for multi-leg baskets
 enable_exits = false
 take_profit_bid = 0.99
 

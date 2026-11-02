@@ -1,7 +1,7 @@
 [project]
 name = "kalshi-trader"
 version = "0.1.0"
-description = "Kalshi tennis market research and paper-trading platform (no real-money trading)"
+description = "Kalshi multi-strategy research and paper-trading platform (no real-money trading)"
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "Proprietary - personal use" }
