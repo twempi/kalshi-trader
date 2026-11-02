@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Sequence
+from dataclasses import replace
 from typing import Any
 
 from kalshi_trader.api.rest import KalshiRestClient
@@ -294,6 +295,8 @@ class KalshiLiveDataProvider(ScoreProvider):
                 continue
             try:
                 state = parse_kalshi_live(item.details, ref, received)
+                if item.http_cache_age_s is not None:
+                    state = replace(state, source_age_s=item.http_cache_age_s)
             except Exception as exc:  # untrusted input: never let one record kill the loop
                 log.warning(
                     "live_data_parse_failed", milestone_id=item.milestone_id, error=repr(exc)[:300]

@@ -115,6 +115,10 @@ class Market(ApiModel):
     price_level_structure: str | None = None
     price_ranges: list[PriceRange] = Field(default_factory=list)
     exchange_index: int | None = None
+    strike_type: str | None = None
+    floor_strike: float | None = None
+    cap_strike: float | None = None
+    fee_waiver_expiration_time: OptionalDatetime = None
 
     @property
     def competitor_id(self) -> str | None:
@@ -145,8 +149,11 @@ class Event(ApiModel):
     sub_title: str = ""
     category: str = ""
     mutually_exclusive: bool | None = None
+    collateral_return_type: str | None = None
     product_metadata: dict[str, Any] | None = None
     markets: list[Market] | None = None
+    fee_type_override: str | None = None
+    fee_multiplier_override: float | None = None
 
     @property
     def competition(self) -> str | None:
@@ -190,6 +197,8 @@ class LiveData(ApiModel):
     type: str = ""
     details: dict[str, Any] = Field(default_factory=dict)
     milestone_id: str
+    # Not an API field: the HTTP ``Age`` of the (CDN-cached) response it came in.
+    http_cache_age_s: float | None = None
 
 
 def parse_levels(value: Any) -> list[tuple[Decimal, Decimal]]:

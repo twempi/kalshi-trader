@@ -21,10 +21,50 @@ class TradeOutcome:
     fees: float
     model_prob: float | None = None
     event: str | None = None
+    expected_pnl: float | None = None  # ex-ante conservative expectation at the actual fill
+    slippage: float | None = None
+    stage: str | None = None
 
     @property
     def won(self) -> bool:
         return self.pnl > 0
+
+
+def outcomes_from_trades(rows: Sequence[Any]) -> list[TradeOutcome]:
+    """Closed ``PaperTradeRow``s -> outcomes. Legs of one basket (same ``group_id``) are
+    combined into a single outcome so a multi-leg trade is not counted several times."""
+    groups: dict[str, list[Any]] = {}
+    for row in rows:
+        if row.status not in ("settled", "closed"):
+            continue
+        groups.setdefault(row.group_id or f"trade-{row.id}", []).append(row)
+    out = []
+    for legs in groups.values():
+        first = legs[0]
+        contracts = float(sum(r.entry_contracts for r in legs)) / len(legs)
+        cost = float(sum(r.entry_cost + r.entry_fee for r in legs))
+        expected = [r.expected_pnl for r in legs if r.expected_pnl is not None]
+        slip = [float(r.slippage) for r in legs if r.slippage is not None]
+        out.append(
+            TradeOutcome(
+                opened_ts=min(r.opened_ts for r in legs),
+                closed_ts=max((r.closed_ts or r.opened_ts) for r in legs),
+                strategy=first.strategy,
+                entry_price=(cost / contracts)
+                if len(legs) > 1 and contracts
+                else float(first.entry_price),
+                contracts=contracts,
+                cost=cost,
+                pnl=float(sum((r.realized_pnl or 0) for r in legs)),
+                fees=float(sum(r.entry_fee + r.exit_fee for r in legs)),
+                model_prob=first.robust_prob if len(legs) == 1 else None,
+                event=first.event_ticker,
+                expected_pnl=sum(expected) if expected else None,
+                slippage=sum(slip) if slip else None,
+                stage=getattr(first, "stage", None),
+            )
+        )
+    return sorted(out, key=lambda o: o.closed_ts)
 
 
 def equity_curve(
@@ -118,6 +158,19 @@ def compute_metrics(trades: Sequence[TradeOutcome], starting_balance: float) -> 
         else None,
         "avg_entry_price": sum(t.entry_price for t in trades) / n,
         "final_equity": round(starting_balance + total, 4),
+        "capital_deployed": round(deployed, 4),
+        "total_slippage": round(sum(t.slippage or 0.0 for t in trades), 4),
+        "expected_pnl_ex_ante": (
+            round(sum(t.expected_pnl for t in trades if t.expected_pnl is not None), 4)
+            if any(t.expected_pnl is not None for t in trades)
+            else None
+        ),
+        # Over trades with an ex-ante expectation only (baselines have none).
+        "realized_minus_expected": (
+            round(sum(t.pnl - t.expected_pnl for t in trades if t.expected_pnl is not None), 4)
+            if any(t.expected_pnl is not None for t in trades)
+            else None
+        ),
     }
 
 

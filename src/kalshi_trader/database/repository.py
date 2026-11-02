@@ -17,6 +17,8 @@ from kalshi_trader.database.tables import (
     LiveViewRow,
     MarketRow,
     MarketSnapshotRow,
+    ModelPredictionRow,
+    OpportunityRow,
     ScoreSnapshotRow,
     SeriesRow,
     SignalRow,
@@ -198,12 +200,27 @@ class Repository:
             stmt = select(MarketRow).where(MarketRow.event_ticker.in_(list(event_tickers)))
             return list(s.scalars(stmt))
 
-    def set_pre_match_prob(self, ticker: str, prob: float, ts: float) -> None:
+    def set_pre_match_prob(
+        self, ticker: str, prob: float, ts: float, known_ts: float | None = None
+    ) -> None:
+        """`ts` = when the price was observed; `known_ts` = when this application learned
+        it (live capture: same moment; candle backfill: later)."""
         with self.db.session() as s:
             row = s.get(MarketRow, ticker)
             if row is not None:
                 row.pre_match_prob = prob
                 row.pre_match_prob_ts = ts
+                row.pre_match_prob_known_ts = known_ts if known_ts is not None else time.time()
+
+    # ------------------------------------------------------- model predictions
+    def insert_model_predictions(self, rows: Sequence[dict[str, Any]]) -> None:
+        if rows:
+            with self.db.session() as s:
+                s.execute(sqlite_insert(ModelPredictionRow), list(rows))
+
+    def prune_opportunities(self, keep_seconds: float) -> None:
+        with self.db.session() as s:
+            s.execute(delete(OpportunityRow).where(OpportunityRow.ts < time.time() - keep_seconds))
 
     # ------------------------------------------------------------ snapshots
     def insert_market_snapshots(self, rows: Sequence[dict[str, Any]]) -> None:

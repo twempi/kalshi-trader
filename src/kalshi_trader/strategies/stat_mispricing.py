@@ -1,0 +1,247 @@
+"""Strategy A (statistical mispricing), instantiated for tennis as Strategy C.
+
+Idea: buy a contract when a *defensible, independent* probability model says it is worth
+more than its full executable cost, by enough to cover fees, execution costs and the
+model's own uncertainty. The decision always uses the model's conservative probability
+``q`` (a lower credible bound), never its point estimate:
+
+    expected net profit (conservative) = n * q - (walked notional + exact fees)  >= n * min_edge
+
+For a NO contract the backed player's probability is used (NO on player A's market pays
+exactly when player B wins), so complementary probabilities are handled by construction.
+
+Fair values come from pluggable ``FairValueModel`` objects. A market for which no model
+can produce an independent estimate is reported as ``unsupported`` - the strategy never
+invents a probability, and never uses the current market price as both the fair value and
+the evidence of mispricing. Today exactly one model is implemented:
+
+* ``tennis_markov``: the exact Markov-chain match model with posterior uncertainty over
+  serve strengths. Its only market input is the *pre-match* price used to anchor relative
+  strength; the in-play information (score, server, live serve statistics) is independent of
+  the live market price, which is what the strategy compares against.
+
+Stages: ``prematch`` is unsupported (the only pre-match strength information available is
+the market price itself), ``early`` = first set, ``late`` = a player within
+``late_games_from_victory`` games of winning, ``mid`` = otherwise.
+"""
+
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from decimal import Decimal
+from itertools import pairwise
+
+from kalshi_trader.config import FeeSettings, TennisModelStrategySettings
+from kalshi_trader.core.opportunity import DecisionStatus, FairValue, Leg, Opportunity
+from kalshi_trader.execution.fees import fee_per_contract_estimate
+from kalshi_trader.execution.fills import snap_price_down
+from kalshi_trader.models.ev import max_price_for_edge
+from kalshi_trader.strategies.base import MatchContext, ScanContext, Strategy
+from kalshi_trader.tennis.state import MatchState, MatchStatus
+
+LIMIT_FEE_HINT = Decimal("100")
+
+
+def match_stage(score: MatchState | None, late_games: int) -> str:
+    """prematch | early | mid | late (documented in the module docstring)."""
+    if score is None or score.status != MatchStatus.LIVE or score.score is None:
+        return "prematch"
+    state = score.score
+    if state.sets == (0, 0):
+        return "early"
+    distances = [d for d in (state.games_from_victory(0), state.games_from_victory(1)) if d]
+    if distances and min(distances) <= late_games:
+        return "late"
+    return "mid"
+
+
+def probability_band(p: float) -> str:
+    edges = (0.0, 0.2, 0.4, 0.6, 0.8, 0.9, 0.95, 1.0001)
+    for lo, hi in pairwise(edges):
+        if lo <= p < hi:
+            return f"{lo:.2f}-{min(hi, 1.0):.2f}"
+    return "unknown"
+
+
+class FairValueModel(ABC):
+    name: str = "abstract"
+
+    @abstractmethod
+    def unsupported_reason(self, ctx: MatchContext) -> str | None:
+        """None if a defensible estimate exists for this context, else why not."""
+
+    @abstractmethod
+    def fair_value(self, ctx: MatchContext, player: int) -> FairValue: ...
+
+
+class TennisMarkovFairValue(FairValueModel):
+    name = "tennis_markov"
+
+    def __init__(self, require_pre_match_prior: bool, min_ess: float) -> None:
+        self.require_pre_match_prior = require_pre_match_prior
+        self.min_ess = min_ess
+
+    def unsupported_reason(self, ctx: MatchContext) -> str | None:
+        score, estimate = ctx.score, ctx.estimate
+        if score is None or not score.is_live:
+            return "match not live with a valid score"
+        if score.source_delayed:
+            return "score source flagged delayed"
+        if not score.fmt.known:
+            return "match format unknown"
+        if estimate is None:
+            return "no model estimate"
+        if self.require_pre_match_prior and estimate.prior.source != "pre_match_price":
+            return "no pre-match price prior (tour-average prior is not specific enough)"
+        if estimate.effective_sample_size < self.min_ess:
+            return f"posterior degenerate (ESS {estimate.effective_sample_size:.0f})"
+        return None
+
+    def fair_value(self, ctx: MatchContext, player: int) -> FairValue:
+        est = ctx.estimate
+        assert est is not None and ctx.score is not None
+        prob = est.for_player(player)
+        p_high = est.p1_robust_high if player == 0 else 1.0 - est.p1_robust_low
+        return FairValue(
+            p=prob.point,
+            p_low=prob.robust_low,
+            p_high=p_high,
+            source=self.name,
+            as_of_ts=ctx.score.received_ts,
+            details={
+                "prior": est.prior.source,
+                "std": round(est.p1_std, 4),
+                "latency_points": est.latency_points,
+                "credible_quantile": est.credible_quantile,
+            },
+        )
+
+
+class TennisModelStrategy(Strategy):
+    """Statistical mispricing on tennis match-winner markets, any configured match stage."""
+
+    name = "tennis_model"
+    version = "1"
+    requires_score = True
+
+    def __init__(self, settings: TennisModelStrategySettings, fees: FeeSettings) -> None:
+        super().__init__(settings, fees)
+        self.settings: TennisModelStrategySettings = settings
+        self.model: FairValueModel = TennisMarkovFairValue(
+            settings.require_pre_match_prior, settings.min_effective_sample_size
+        )
+
+    def scan(self, ctx: ScanContext) -> list[Opportunity]:
+        out = super().scan(ctx)
+        # Other categories are visible to the system (cross-market discovery) but have no
+        # independent probability model: say so instead of guessing.
+        for group in ctx.groups:
+            if group.category != "tennis" and group.markets:
+                market = group.markets[0]
+                out.append(
+                    Opportunity(
+                        strategy=self.name,
+                        strategy_version=self.version_tag,
+                        kind="directional",
+                        category=group.category,
+                        event_ticker=group.event_ticker,
+                        legs=[Leg(market.ticker, group.event_ticker, "yes")],
+                        observed_ts=ctx.now,
+                        title=group.title,
+                        status=DecisionStatus.UNSUPPORTED,
+                        reasons=[
+                            f"no independent probability model for series {group.series_ticker}"
+                        ],
+                    )
+                )
+        return out
+
+    def evaluate_match(self, ctx: MatchContext) -> list[Opportunity]:
+        s = self.settings
+        stage = match_stage(ctx.score, s.late_games_from_victory)
+        if stage == "prematch":
+            if "prematch" in s.stages and ctx.score is not None:
+                return [
+                    self.note(
+                        ctx,
+                        DecisionStatus.UNSUPPORTED,
+                        "pre-match: no independent probability source (only the market price)",
+                        stage=stage,
+                    )
+                ]
+            return []
+        if stage not in s.stages:
+            return [self.note(ctx, DecisionStatus.FILTERED, f"stage {stage} disabled", stage=stage)]
+        if s.tours and ctx.match.tour_key not in s.tours:
+            return [
+                self.note(
+                    ctx, DecisionStatus.FILTERED, f"tour {ctx.match.tour_key} disabled", stage=stage
+                )
+            ]
+        why = self.model.unsupported_reason(ctx)
+        if why is not None:
+            return [self.note(ctx, DecisionStatus.UNSUPPORTED, why, stage=stage)]
+
+        best: Opportunity | None = None
+        best_ev = float("-inf")
+        last_reason = "no executable option"
+        for player in (0, 1):
+            fair = self.model.fair_value(ctx, player)
+            for option in ctx.options_for(player):
+                if not option.market.tradable:
+                    last_reason = "market not active"
+                    continue
+                ask = option.book.best_ask(option.side)
+                spread = option.book.spread(option.side)
+                if ask is None or spread is None or spread > s.max_spread:
+                    last_reason = f"spread {spread} > {s.max_spread}"
+                    continue
+                price = ask[0]
+                if not (s.min_price <= price <= s.max_price):
+                    last_reason = f"ask {price} outside [{s.min_price}, {s.max_price}]"
+                    continue
+                mult = option.market.fee_multiplier
+                fee_pc = fee_per_contract_estimate(
+                    price, LIMIT_FEE_HINT, self.fees.taker_rate, mult
+                )
+                ev = fair.p_low - float(price + fee_pc)
+                if ev < float(s.min_edge):
+                    if ev > best_ev and best is None:
+                        best_ev = ev
+                        last_reason = (
+                            f"best conservative edge {ev:+.3f} < {s.min_edge} "
+                            f"(q={fair.p_low:.3f}, ask {price})"
+                        )
+                    continue
+                cap = max_price_for_edge(
+                    fair.p_low,
+                    s.min_edge,
+                    fee_rate=self.fees.taker_rate,
+                    fee_multiplier=mult,
+                    contracts_hint=LIMIT_FEE_HINT,
+                    ceiling=min(Decimal("0.99"), price + s.limit_slippage),
+                )
+                if cap is None or cap < price:
+                    last_reason = "no limit price keeps the edge"
+                    continue
+                limit = snap_price_down(
+                    min(price + s.limit_slippage, cap), option.market.price_ranges
+                )
+                if limit < price:
+                    continue
+                opp = self.directional(
+                    ctx,
+                    option,
+                    fair=fair,
+                    limit_price=limit,
+                    stage=stage,
+                    reason=f"{stage}: q={fair.p_low:.3f} (p={fair.p:.3f}) vs ask {price}, "
+                    f"band {probability_band(fair.p)}",
+                )
+                opp.provenance["probability_band"] = probability_band(fair.p)
+                opp.provenance["tour"] = ctx.match.tour_key
+                if best is None or ev > best_ev:
+                    best, best_ev = opp, ev
+        if best is None:
+            return [self.note(ctx, DecisionStatus.FILTERED, last_reason, stage=stage)]
+        return [best]

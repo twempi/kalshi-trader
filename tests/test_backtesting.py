@@ -277,9 +277,12 @@ def test_replay_runs_strategy_without_look_ahead(tmp_path, settings: Settings) -
             )
         )
         s.add(book_row(110.0, "0.78", "0.20"))  # a cheaper ask appears only later
-    trades, info = replay(settings, db)
-    assert info["unsettled_trades_excluded"] == 0
-    assert len(trades) == 1
-    t = trades[0]
+    settings.strategies.late_match.mode = "paper"
+    result = replay(settings, db)
+    assert result.info["unsettled_open_positions_main"] == 0
+    assert len(result.outcomes) == 1
+    t = result.outcomes[0]
     assert t.entry_price == pytest.approx(0.92)  # not the later 0.80
     assert t.opened_ts == 105.0 and t.pnl > 0
+    assert t.closed_ts == 500.0  # settled when the result became known, not at the end
+    assert len(result.shadow_outcomes["late_match"]) == 1

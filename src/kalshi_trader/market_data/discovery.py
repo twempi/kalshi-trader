@@ -69,8 +69,14 @@ class TrackedMarket:
     close_ts: float | None = None
     occurrence_ts: float | None = None
     pre_match_prob: float | None = None
+    pre_match_prob_ts: float | None = None
     in_open_list: bool = True
     last_status_check: float = 0.0
+    title: str = ""
+    strike_type: str | None = None
+    floor_strike: float | None = None
+    cap_strike: float | None = None
+    category: str = "tennis"
 
     @property
     def tradable(self) -> bool:

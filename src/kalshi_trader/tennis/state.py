@@ -256,6 +256,15 @@ class ScoreState:
             state = state.apply_point(player)
         return None
 
+    def progress(self) -> tuple[int, int, int]:
+        """(sets played, games played, points played in the current game/tiebreak).
+
+        Strictly increases as a match advances, so a new observation with a *smaller*
+        progress than the previous one is an out-of-order (stale cache) response.
+        """
+        games = sum(a + b for a, b in self.completed_sets) + self.games[0] + self.games[1]
+        return (self.sets[0] + self.sets[1], games, self.points[0] + self.points[1])
+
     def games_from_victory(self, player: int, limit: int = 30) -> int | None:
         """Minimum number of games (a tiebreak counts as one) `player` needs to win."""
         state = self
@@ -321,6 +330,9 @@ class MatchState:
     source_delayed: bool = False
     valid: bool = True
     issues: tuple[str, ...] = ()
+    # Estimated age of the *source* data when it was received (e.g. the CDN ``Age``
+    # header); None when unknown, in which case consumers assume a configured worst case.
+    source_age_s: float | None = None
 
     @property
     def is_live(self) -> bool:
@@ -335,9 +347,10 @@ class MatchState:
         return text
 
     def fingerprint(self) -> str:
-        """Hash of everything except the receive time, to detect changes cheaply."""
+        """Hash of the match state (not receive time or cache age), to detect changes."""
         payload = self.to_dict()
         payload.pop("received_ts", None)
+        payload.pop("source_age_s", None)
         raw = json.dumps(payload, sort_keys=True, default=str)
         return hashlib.blake2b(raw.encode(), digest_size=12).hexdigest()
 

@@ -78,6 +78,14 @@ class RestHealth:
         }
 
 
+def _header_seconds(value: str | None) -> float | None:
+    try:
+        seconds = float(value) if value is not None else None
+    except ValueError:
+        return None
+    return seconds if seconds is not None and 0 <= seconds < 86400 else None
+
+
 def _chunks(items: Sequence[str], size: int) -> Iterable[Sequence[str]]:
     for start in range(0, len(items), size):
         yield items[start : start + size]
@@ -126,8 +134,16 @@ class KalshiRestClient:
 
     # ------------------------------------------------------------------ core
     async def _request(
-        self, method: str, path: str, params: Any = None, *, auth: bool = False
+        self,
+        method: str,
+        path: str,
+        params: Any = None,
+        *,
+        auth: bool = False,
+        capture_headers: tuple[str, ...] = (),
     ) -> dict[str, Any]:
+        """GET `path`. Names in `capture_headers` are copied from the HTTP response into
+        ``payload["_headers"]`` (used to learn how long a CDN-cached response had aged)."""
         if method.upper() != "GET":
             raise ReadOnlyViolation(
                 f"Refusing {method} {path}: this application never modifies exchange state"
@@ -164,6 +180,10 @@ class KalshiRestClient:
                         else:
                             self._record_success(started)
                             self._bucket.recover()
+                            if capture_headers:
+                                payload["_headers"] = {
+                                    h: response.headers.get(h) for h in capture_headers
+                                }
                             return payload
                 else:
                     if status == 429:
@@ -400,13 +420,39 @@ class KalshiRestClient:
         return self._parse_many(Milestone, items, "milestone")
 
     async def get_live_data_batch(self, milestone_ids: Sequence[str]) -> list[LiveData]:
+        """Live scores. The response is CDN-cached; the standard HTTP ``Age`` header (seconds
+        the response sat in a cache) is attached to each record as ``http_cache_age_s`` when
+        present, because a locally fresh response can still describe an older score."""
         results: list[LiveData] = []
         for chunk in _chunks(list(milestone_ids), 100):
             payload = await self._request(
-                "GET", "/live_data/batch", [("milestone_ids", mid) for mid in chunk]
+                "GET",
+                "/live_data/batch",
+                [("milestone_ids", mid) for mid in chunk],
+                capture_headers=("age",),
             )
-            results.extend(self._parse_many(LiveData, payload.get("live_datas") or [], "live"))
+            age = _header_seconds((payload.get("_headers") or {}).get("age"))
+            for item in self._parse_many(LiveData, payload.get("live_datas") or [], "live"):
+                item.http_cache_age_s = age
+                results.append(item)
         return results
+
+    async def get_events(
+        self,
+        *,
+        series_ticker: str | None = None,
+        status: str | None = None,
+        with_nested_markets: bool = True,
+    ) -> list[Event]:
+        """``GET /events`` (paginated, max 200 per page)."""
+        params = {
+            "series_ticker": validate_ticker(series_ticker) if series_ticker else None,
+            "status": status,
+            "with_nested_markets": str(with_nested_markets).lower(),
+            "limit": 200,
+        }
+        items = [item async for item in self._paginate("/events", params, "events")]
+        return self._parse_many(Event, items, "event")
 
     # --------------------------------------------------------- authenticated
     async def get_api_keys(self) -> list[dict[str, Any]]:

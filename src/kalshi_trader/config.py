@@ -147,24 +147,56 @@ class ModelSettings(BaseModel):
     latency_points: int = 1
 
 
-class LateMatchStrategySettings(BaseModel):
-    enabled: bool = True
+StrategyMode = Literal["off", "observe", "paper"]
+
+
+class StrategySettingsBase(BaseModel):
+    """Common strategy switches.
+
+    ``mode``: ``off`` (not loaded), ``observe`` (scanned, evaluated and recorded - including
+    a per-strategy *shadow* ledger - but never allocated main paper capital) or ``paper``
+    (eligible for the main paper account through the central allocator). Nothing here can
+    place a real order. The legacy ``enabled = false`` key maps to ``mode = "off"``.
+    """
+
+    mode: StrategyMode = "observe"
+    min_edge: Money = Decimal("0.02")  # $ per contract after fees, conservative probability
+    max_spread: Money = Decimal("0.04")
+    limit_slippage: Money = Decimal("0.01")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_enabled(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "enabled" in data:
+            data = dict(data)
+            enabled = data.pop("enabled")
+            if not enabled:
+                data["mode"] = "off"
+        return data
+
+    @property
+    def enabled(self) -> bool:
+        return self.mode != "off"
+
+
+class LateMatchStrategySettings(StrategySettingsBase):
+    """Baseline 2: the original late-match favourite rules, preserved unchanged."""
+
+    mode: StrategyMode = "observe"
     min_price: Money = Decimal("0.80")
     max_price: Money = Decimal("0.97")
     min_model_prob: float = 0.90
-    # Minimum EV per contract (dollars) after fees, using the conservative probability.
     min_edge: Money = Decimal("0.02")
     max_games_from_victory: int = 3
     require_deciding_set: bool = False
     max_spread: Money = Decimal("0.04")
-    # Extra price tolerance over the best ask for the simulated IOC limit order.
     limit_slippage: Money = Decimal("0.01")
 
 
-class PriceThresholdStrategySettings(BaseModel):
-    """Score-agnostic baseline: buy the favourite whenever its ask is inside a band."""
+class PriceThresholdStrategySettings(StrategySettingsBase):
+    """Baseline 1: buy the favourite whenever its ask is inside a band (no model)."""
 
-    enabled: bool = False
+    mode: StrategyMode = "observe"
     min_price: Money = Decimal("0.90")
     max_price: Money = Decimal("0.97")
     max_spread: Money = Decimal("0.03")
@@ -172,29 +204,137 @@ class PriceThresholdStrategySettings(BaseModel):
     require_live_match: bool = True
 
 
+TennisStage = Literal["prematch", "early", "mid", "late"]
+
+
+class TennisModelStrategySettings(StrategySettingsBase):
+    """Strategy A/C: statistical mispricing with the tennis Markov model, any match stage.
+
+    Stages: ``early`` = first set, ``late`` = either player within
+    ``late_games_from_victory`` games of winning, ``mid`` = otherwise. ``prematch`` is
+    accepted but always reported unsupported: the only pre-match prior available is the
+    market price itself, which cannot be evidence that the market is mispriced.
+    """
+
+    mode: StrategyMode = "paper"
+    stages: list[TennisStage] = Field(default_factory=lambda: ["early", "mid", "late"])
+    tours: list[str] = Field(default_factory=list)  # empty = all tours
+    min_price: Money = Decimal("0.05")
+    max_price: Money = Decimal("0.95")
+    min_edge: Money = Decimal("0.03")
+    max_spread: Money = Decimal("0.04")
+    limit_slippage: Money = Decimal("0.02")
+    late_games_from_victory: int = 3
+    # Without a pre-match price the prior is a tour average (50/50 strengths), which would
+    # flag nearly every underdog as cheap. Require the anchored prior by default.
+    require_pre_match_prior: bool = True
+    min_effective_sample_size: float = 50.0
+
+
+class CrossMarketStrategySettings(StrategySettingsBase):
+    """Strategy B: baskets whose combined payoff is fixed by verifiable settlement rules."""
+
+    mode: StrategyMode = "paper"
+    min_edge: Money = Decimal("0.01")  # $ per basket unit after all fees
+    include_tennis_pairs: bool = True
+    # Extra (non-tennis) series to scan for related markets, e.g. ["KXHIGHNY"].
+    series_tickers: list[str] = Field(default_factory=list)
+    refresh_interval_s: float = 300.0
+    max_legs: int = 12
+    max_book_age_s: float = 5.0
+    # An apparent mispricing must persist this long / this many scans before it is eligible
+    # (one-snapshot crossings are usually stale or racing books).
+    min_persistence_s: float = 2.0
+    min_persistence_scans: int = 2
+    max_spread: Money = Decimal("1")  # spreads are already priced into executable asks
+    max_units: int = 50
+
+
+class MarketMakingStrategySettings(StrategySettingsBase):
+    """Strategy D: RESEARCH ONLY. Hypothetical quotes and conservative simulated maker fills.
+
+    Fill rule ``trade_through``: a resting bid fills only once the opposite best ask
+    trades *through* it (strictly better than our price), so queue position cannot be
+    assumed. This is pessimistic about fill rates and inherently captures adverse selection.
+    """
+
+    mode: StrategyMode = "observe"
+    min_spread: Money = Decimal("0.04")
+    quote_size: Money = Decimal("10")
+    max_inventory: Money = Decimal("50")  # net contracts per market
+    min_price: Money = Decimal("0.10")
+    max_price: Money = Decimal("0.90")
+    adverse_horizon_s: float = 60.0
+    max_book_age_s: float = 10.0
+
+    @model_validator(mode="after")
+    def _research_only(self) -> MarketMakingStrategySettings:
+        if self.mode == "paper":
+            raise ValueError(
+                "market_making supports only 'off' or 'observe': maker fills cannot be "
+                "simulated credibly enough to allocate paper capital yet"
+            )
+        return self
+
+
 class StrategiesSettings(BaseModel):
+    tennis_model: TennisModelStrategySettings = Field(default_factory=TennisModelStrategySettings)
     late_match: LateMatchStrategySettings = Field(default_factory=LateMatchStrategySettings)
     price_threshold: PriceThresholdStrategySettings = Field(
         default_factory=PriceThresholdStrategySettings
     )
+    cross_market: CrossMarketStrategySettings = Field(default_factory=CrossMarketStrategySettings)
+    market_making: MarketMakingStrategySettings = Field(
+        default_factory=MarketMakingStrategySettings
+    )
     evaluation_interval_s: float = 1.0
+    # Every strategy that is not "off" also trades a standalone shadow ledger so all
+    # strategies can be compared on identical observations with identical risk rules.
+    shadow_ledgers: bool = True
+    entry_cooldown_s: float = 30.0
 
 
 class RiskSettings(BaseModel):
-    max_fraction_per_trade: Money = Decimal("0.02")
+    max_fraction_per_trade: Money = Decimal("0.02")  # max loss of one trade / equity
     max_position_cost: Money = Decimal("25")
+    # Daily loss / drawdown limits stop NEW entries. They are not a loss ceiling: positions
+    # already open can still lose their full cost.
     max_daily_loss: Money = Decimal("50")
     max_drawdown_fraction: Money = Decimal("0.15")
     max_open_positions: int = 5
+    max_aggregate_exposure_fraction: Money = Decimal("0.30")  # open max-loss / equity
+    max_event_exposure_fraction: Money = Decimal("0.03")
+    max_strategy_exposure_fraction: Money = Decimal("0.15")
+    # Correlation group: tournament/competition for tennis, series for other markets.
+    max_correlated_exposure_fraction: Money = Decimal("0.08")
     min_liquidity_contracts: Money = Decimal("10")
     max_spread: Money = Decimal("0.05")
     max_market_data_age_s: float = 10.0
     max_score_data_age_s: float = 30.0
+    # Kalshi's live-data responses are CDN-cached (max-age 10 s): a locally fresh response
+    # can describe a score this old. Added to every score age.
+    score_source_staleness_s: float = 10.0
+    # A live score that has not changed for this long is treated as possibly frozen.
+    max_score_unchanged_s: float = 300.0
+    # If the market mid moved this much since the last score change, the score is suspect.
+    max_mid_move_since_score_change: Money = Decimal("0.10")
     max_trades_per_market: int = 1
     max_trades_per_event: int = 1
     # Fractional Kelly multiplier; sizing never depends on past losses (no martingale).
     kelly_fraction: Money = Decimal("0.10")
+    # Strategies without validated out-of-sample evidence get this share of normal size.
+    unvalidated_size_multiplier: Money = Decimal("0.25")
     max_consecutive_errors: int = 5
+
+
+class EvidenceSettings(BaseModel):
+    """Predefined evidence a strategy needs before it is classified as validated."""
+
+    min_out_of_sample_trades: int = 50
+    min_out_of_sample_events: int = 30
+    max_calibration_pvalue: float = 0.05
+    require_positive_ci: bool = True  # cluster-bootstrap CI of mean P&L excludes zero
+    max_drawdown_fraction: float = 0.20
 
 
 class FeeSettings(BaseModel):
@@ -240,6 +380,7 @@ class Settings(BaseSettings):
     model: ModelSettings = Field(default_factory=ModelSettings)
     strategies: StrategiesSettings = Field(default_factory=StrategiesSettings)
     risk: RiskSettings = Field(default_factory=RiskSettings)
+    evidence: EvidenceSettings = Field(default_factory=EvidenceSettings)
     fees: FeeSettings = Field(default_factory=FeeSettings)
     paper: PaperSettings = Field(default_factory=PaperSettings)
     dashboard: DashboardSettings = Field(default_factory=DashboardSettings)

@@ -155,6 +155,8 @@ class FakeProvider(ScoreProvider):
 def engine(settings: Settings) -> TradingEngine:
     settings.model.uncertainty_samples = 32
     settings.model.prior_draws = 1000
+    # Exercise the preserved baseline end to end through the main paper account.
+    settings.strategies.late_match.mode = "paper"
     return TradingEngine(settings, rest=FakeRest(), provider=FakeProvider())
 
 
@@ -169,11 +171,22 @@ async def test_full_cycle_trades_and_settles(engine: TradingEngine) -> None:
     await engine._evaluate_step()
 
     trades = engine.broker.open_trades()
-    assert len(trades) == 1, engine.repo.recent_signals()
+    assert len(trades) == 1, engine.core.diagnostics.snapshot()
     trade = trades[0]
     assert trade.market_ticker == "KXATPMATCH-TEST-A" and trade.side == "yes"
-    assert trade.entry_price == D("0.92") and trade.contracts == D("20")  # 50% of 40 shown
-    assert trade.data_source == "live_paper"
+    assert trade.strategy == "late_match" and trade.data_source == "live_paper"
+    # Unvalidated strategy: 25% of the $20 per-trade budget -> 5 contracts at 0.92 + fee.
+    assert trade.entry_price == D("0.92") and trade.contracts == D("5")
+    assert trade.entry_cost + trade.entry_fee <= D("5")
+    assert trade.expected_pnl is not None and trade.max_loss == trade.entry_cost + trade.entry_fee
+    # The strategy's standalone shadow ledger traded the same opportunity at full size,
+    # limited by 50% of the 40 displayed contracts.
+    shadow = engine.core.shadows["late_match"].open_trades()
+    assert len(shadow) == 1 and shadow[0].contracts == D("20")
+    assert shadow[0].data_source == "shadow"
+    # The tennis model needs a pre-match price prior, which this synthetic match lacks.
+    statuses = engine.core.diagnostics.snapshot()["last_cycle"]
+    assert statuses["tennis_model"] == {"unsupported": 1}
 
     await engine._evaluate_step()  # same opportunity again: no duplicate entry
     assert len(engine.broker.open_trades()) == 1
@@ -181,7 +194,10 @@ async def test_full_cycle_trades_and_settles(engine: TradingEngine) -> None:
     views = engine.repo.live_views()
     assert {v["market_ticker"] for v in views} == {"KXATPMATCH-TEST-A", "KXATPMATCH-TEST-B"}
     a = next(v for v in views if v["market_ticker"].endswith("-A"))
-    assert a["opportunity"] and a["model_prob"] > 0.95 and a["has_match_point"]
+    assert a["model_prob"] > 0.95 and a["has_match_point"]
+    # The repeat is now explained rather than silently dropped.
+    assert a["opportunity_status"] == "rejected" and a["opportunity_strategy"] == "late_match"
+    assert "max trades for this market" in a["opportunity_reason"]
 
     engine.rest.final = {
         "KXATPMATCH-TEST-A": ("finalized", "yes"),
@@ -190,8 +206,9 @@ async def test_full_cycle_trades_and_settles(engine: TradingEngine) -> None:
     engine.markets["KXATPMATCH-TEST-A"].in_open_list = False
     await engine._status_step()
     assert engine.broker.open_trades() == []
+    assert engine.core.shadows["late_match"].open_trades() == []
     account = engine.broker.account()
-    assert account.realized_pnl == D("20") - (D("18.40") + trade.entry_fee)
+    assert account.realized_pnl == D("5") - (D("4.60") + trade.entry_fee)
     await engine._equity_step()
     await engine._housekeeping_step()
     assert any(h.component == "kalshi_rest" for h in engine.repo.all_health())
@@ -200,6 +217,7 @@ async def test_full_cycle_trades_and_settles(engine: TradingEngine) -> None:
 async def test_engine_respects_pause_and_record_only(settings: Settings) -> None:
     settings.model.uncertainty_samples = 32
     settings.model.prior_draws = 1000
+    settings.strategies.late_match.mode = "paper"
     eng = TradingEngine(settings, rest=FakeRest(), provider=FakeProvider())
     eng.risk.pause("test pause")
     for step in (
@@ -211,10 +229,26 @@ async def test_engine_respects_pause_and_record_only(settings: Settings) -> None
     ):
         await step()
     assert eng.broker.open_trades() == []
-    rejected = eng.repo.recent_signals()
-    assert rejected and not rejected[0].approved
-    rec = TradingEngine(settings, record_only=True, rest=FakeRest(), provider=FakeProvider())
-    assert rec.strategies == []
+    rejected = [o for o in eng.core.opportunities if o.strategy == "late_match"]
+    assert rejected and rejected[0].status.value == "rejected"
+    assert "paper trading paused" in rejected[0].reasons
+    # The operator pause applies to the main account only; research ledgers keep running.
+    assert len(eng.core.shadows["late_match"].open_trades()) == 1
+
+    fresh = settings.model_copy(update={"db_path": settings.db_path.with_name("record.db")})
+    rec = TradingEngine(fresh, record_only=True, rest=FakeRest(), provider=FakeProvider())
+    for step in (
+        rec._discovery_step,
+        rec._exchange_step,
+        rec._rest_books_step,
+        rec._scores_step,
+        rec._evaluate_step,
+    ):
+        await step()
+    assert rec.broker.open_trades() == []
+    assert all(b.open_trades() == [] for b in rec.core.shadows.values())
+    observed = [o for o in rec.core.opportunities if o.strategy == "late_match"]
+    assert observed and observed[0].status.value == "observed"
 
 
 async def test_ws_gap_invalidates_books_and_requests_snapshots(engine: TradingEngine) -> None:
