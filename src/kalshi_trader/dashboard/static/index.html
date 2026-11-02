@@ -3,12 +3,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Kalshi Trader - paper trading</title>
+  <title>Kalshi Trader - multi-strategy paper trading</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
   <header class="top">
-    <h1>Kalshi tennis research</h1>
+    <h1>Kalshi quant research</h1>
     <span class="sim-badge" title="No real orders are ever placed">SIMULATED / PAPER</span>
     <span id="engine-pill" class="pill neutral"><span class="dot"></span><span>Engine: …</span></span>
     <span id="trading-pill" class="pill neutral"><span class="dot"></span><span>Trading: …</span></span>
@@ -22,13 +22,17 @@
   <div class="banner" id="banner">
     Simulated paper trading on real, live Kalshi order books. No real orders are placed.
     Model probabilities are statistical estimates, not guarantees; a high win probability is
-    not the same as positive expected value.
+    not the same as positive expected value. No strategy has demonstrated profitability yet.
   </div>
   <nav class="tabs" role="tablist">
     <button role="tab" data-view="overview" aria-selected="true">Overview</button>
+    <button role="tab" data-view="opportunities" aria-selected="false">Opportunities</button>
+    <button role="tab" data-view="strategies" aria-selected="false">Strategies</button>
+    <button role="tab" data-view="diagnostics" aria-selected="false">Why no trades?</button>
     <button role="tab" data-view="markets" aria-selected="false">Live tennis markets</button>
     <button role="tab" data-view="activity" aria-selected="false">Trading activity</button>
     <button role="tab" data-view="analytics" aria-selected="false">Analytics</button>
+    <button role="tab" data-view="research" aria-selected="false">Research</button>
     <button role="tab" data-view="health" aria-selected="false">System health</button>
   </nav>
   <main>
@@ -47,6 +51,73 @@
           <p class="caption">Paper fills, settlements, operator actions and warnings.</p>
           <div class="table-wrap" id="overview-events"></div>
         </div>
+      </div>
+    </section>
+
+    <section class="view" id="view-opportunities" hidden>
+      <div class="filters">
+        <select id="op-strategy" aria-label="Strategy"><option value="">All strategies</option></select>
+        <select id="op-status" aria-label="Status">
+          <option value="">All statuses</option>
+          <option value="filled">filled</option><option value="partial">partial</option>
+          <option value="observed">observed (would trade)</option><option value="rejected">rejected</option>
+          <option value="filtered">filtered</option><option value="unsupported">unsupported</option>
+          <option value="unfilled">unfilled</option>
+        </select>
+        <select id="op-category" aria-label="Category">
+          <option value="">All categories</option><option value="tennis">tennis</option><option value="generic">other markets</option>
+        </select>
+        <label><input type="checkbox" id="op-actionable" checked> Hide filtered / unsupported</label>
+        <span class="muted small" id="op-count"></span>
+      </div>
+      <div class="card">
+        <h2>Opportunity scanner</h2>
+        <p class="caption">Latest state of every opportunity evaluated in the last 15 minutes. Size, fill price, fees
+          and expected profit are computed for the actual simulated order (book walked at that size).
+          "Fair (low)" is the conservative model probability used for decisions. "observed" = would have been
+          allocated but the strategy runs in observe mode. Max risk = maximum possible loss.</p>
+        <div class="table-wrap" id="opportunities-table"></div>
+      </div>
+    </section>
+
+    <section class="view" id="view-strategies" hidden>
+      <div class="card">
+        <h2>Strategy comparison</h2>
+        <p class="caption">Main = the shared paper account (central allocator, unvalidated strategies at reduced size).
+          Shadow = each strategy's own standalone ledger, trading every approved opportunity with identical
+          risk rules, so strategies are compared on the same observations. Expected = sum of ex-ante conservative
+          expected P&amp;L at the actual fills. All values simulated.</p>
+        <div class="table-wrap" id="strategies-table"></div>
+      </div>
+      <div class="card">
+        <h2>Capital allocation and exposure (main account)</h2>
+        <p class="caption">Exposure is maximum possible loss of open positions, against the configured caps.</p>
+        <div id="exposure"></div>
+      </div>
+    </section>
+
+    <section class="view" id="view-diagnostics" hidden>
+      <div class="card">
+        <h2>Why is the system (not) trading?</h2>
+        <p class="caption">Outcome counts for every opportunity evaluated today (UTC), and the most common reasons
+          for rejection. "Last cycle" = the most recent one-second evaluation. Zero trades is an acceptable
+          outcome when nothing clears the requirements.</p>
+        <div id="diagnostics"></div>
+      </div>
+    </section>
+
+    <section class="view" id="view-research" hidden>
+      <div class="card">
+        <h2>Tennis model vs market (forward data)</h2>
+        <p class="caption">Model probabilities recorded live next to the executable market, scored once markets settle.
+          Benchmark = market-implied probability (YES mid). Each match counts once (event-weighted).</p>
+        <div id="research-model"></div>
+      </div>
+      <div class="card">
+        <h2>Market making - research simulation</h2>
+        <p class="caption">Hypothetical quotes and pessimistic simulated maker fills (fill only when the market trades
+          through our price). Not paper trades and not real fills.</p>
+        <div id="research-mm"></div>
       </div>
     </section>
 
@@ -75,8 +146,8 @@
         <h2>Tennis match-winner markets</h2>
         <p class="caption">Prices are real Kalshi quotes (YES side). Market prob = mid of bid/ask.
           Model prob = Markov estimate; "robust" = lower credible bound after assuming the score feed lags by
-          the configured number of points. EV = robust prob − (ask + fees) per contract. Rows tinted =
-          a strategy flagged an opportunity (subject to risk checks).</p>
+          the configured number of points. EV = robust prob − ask, before fees (fees and slippage depend on
+          the final order size; see the Opportunities tab). Rows tinted = an opportunity was approved, observed or filled.</p>
         <div class="table-wrap" id="markets-table"></div>
       </div>
     </section>
@@ -102,8 +173,8 @@
         <div class="table-wrap" id="trades-table"></div>
       </div>
       <div class="card">
-        <h2>Recent strategy signals</h2>
-        <p class="caption">Proposals from strategies and the risk manager's decision.</p>
+        <h2>Recent decisions</h2>
+        <p class="caption">Opportunities that reached the risk/allocation stage in the last 24 hours, and the outcome.</p>
         <div class="table-wrap" id="signals-table"></div>
       </div>
     </section>

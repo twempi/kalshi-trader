@@ -305,12 +305,62 @@ def test_dashboard_endpoints(settings: Settings) -> None:
         "/api/analytics",
         "/api/health",
         "/api/backtests",
+        "/api/opportunities",
+        "/api/strategies",
+        "/api/diagnostics",
+        "/api/exposure",
+        "/api/research",
     ):
         response = client.get(path)
         assert response.status_code == 200, path
     assert "SIMULATED" in client.get("/api/overview").json()["label"]
     csv = client.get("/api/export/trades.csv")
     assert csv.status_code == 200 and csv.text.startswith("id,strategy,market_ticker")
+
+
+async def test_dashboard_shows_engine_decisions(engine: TradingEngine) -> None:
+    """After one live-like cycle the dashboard explains every decision."""
+    for step in (
+        engine._discovery_step,
+        engine._exchange_step,
+        engine._rest_books_step,
+        engine._scores_step,
+        engine._evaluate_step,
+        engine._housekeeping_step,
+        engine._equity_step,
+    ):
+        await step()
+    client = TestClient(create_app(engine.settings, engine.db), client=("127.0.0.1", 50000))
+    opps = client.get("/api/opportunities").json()["opportunities"]
+    by_strategy = {o["strategy"]: o for o in opps}
+    assert by_strategy["late_match"]["status"] == "filled"
+    assert by_strategy["late_match"]["expected_profit_low"] is not None
+    assert by_strategy["tennis_model"]["status"] == "unsupported"
+    filled_only = client.get("/api/opportunities?status=filled").json()["opportunities"]
+    assert {o["strategy"] for o in filled_only} == {"late_match"}
+    strategies = {s["name"]: s for s in client.get("/api/strategies").json()["strategies"]}
+    assert strategies["late_match"]["main_open_positions"] == 1
+    assert strategies["late_match"]["mode"] == "paper"
+    assert strategies["tennis_model"]["today_counts"] == {"unsupported": 1}
+    diag = client.get("/api/diagnostics").json()
+    assert diag["by_strategy"]["tennis_model"]["reasons"][0]["status"] == "unsupported"
+    exposure = client.get("/api/exposure").json()
+    assert exposure["by_strategy"]["late_match"] > 0
+    overview = client.get("/api/overview").json()
+    assert overview["open_positions"] == 1  # main account only, shadow ledgers excluded
+    # Per-strategy pause persists and blocks new main-account entries.
+    denied = client.post("/api/control/strategy/late_match/pause")
+    assert denied.status_code == 403
+    ok = client.post("/api/control/strategy/late_match/pause", headers={"X-Kalshi-Trader": "1"})
+    assert ok.status_code == 200
+    engine.core.registry.reload()
+    assert engine.core.registry.allows_main("late_match", "paper")[0] is False
+    assert (
+        client.post(
+            "/api/control/strategy/nope/pause", headers={"X-Kalshi-Trader": "1"}
+        ).status_code
+        == 404
+    )
 
 
 def test_dashboard_controls_require_header(settings: Settings) -> None:

@@ -60,6 +60,10 @@
     container.appendChild(t);
   }
 
+  const STATUS_KIND = { filled: "good", partial: "good", approved: "good", observed: "neutral", rejected: "warning",
+    unfilled: "warning", filtered: "neutral", unsupported: "neutral", candidate: "neutral" };
+  function statusPill(status) { return pill(STATUS_KIND[status] || "neutral", status); }
+
   function tile(label, value, sub, cls, hero) {
     const t = node("div", "tile" + (hero ? " hero" : ""));
     t.append(node("div", "label", label), node("div", "value " + (cls || ""), value));
@@ -93,10 +97,17 @@
     k.replaceChildren(
       tile("Paper account equity", money(o.equity), `Cash ${money(o.cash)} · open ${money(o.open_value)}`, "", true),
       tile("Total P&L", signedMoney(o.total_pnl), `vs ${money(o.starting_balance)} start`, signClass(o.total_pnl)),
+      tile("Realised / unrealised", `${signedMoney(o.realized_pnl)} / ${signedMoney(o.unrealized_pnl)}`, "unrealised = mark-to-bid vs cost"),
       tile("Today's P&L", signedMoney(o.daily_pnl), "UTC day, mark-to-bid", signClass(o.daily_pnl)),
+      tile("Drawdown", o.drawdown_fraction == null ? "–" : pct(o.drawdown_fraction), `peak ${money(o.peak_equity)}`),
+      tile("Available capital", money(o.available_cash), `in positions ${money(o.open_cost)}`),
       tile("Open positions", String(o.open_positions), "simulated"),
       tile("Completed trades", String(o.completed_trades), `fees paid ${money(o.fees_paid)}`),
       tile("Win rate", o.win_rate === null ? "–" : pct(o.win_rate), "settled/closed trades"),
+      tile("Active paper strategies", String(o.active_paper_strategies ?? 0),
+           (o.strategies || []).map((x) => `${x.name}:${x.paused ? "paused" : x.mode}`).join(" · ") || "start the engine"),
+      tile("System health", (o.unhealthy_components || []).length ? `${o.unhealthy_components.length} issue(s)` : "OK",
+           (o.unhealthy_components || []).join(", ") || "all components reporting", (o.unhealthy_components || []).length ? "neg" : ""),
     );
     const sys = node("div", "tile");
     sys.append(node("div", "label", "System status"));
@@ -158,7 +169,7 @@
       { label: "Model prob", num: true, fmt: (m) => prob(m.model_prob), title: (m) => m.prior_source ? `prior: ${m.prior_source}${m.pre_match_prob ? " (pre-match " + prob(m.pre_match_prob) + ")" : ""}` : "" },
       { label: "Robust low", num: true, fmt: (m) => prob(m.model_prob_robust) },
       { label: "EV/contract", num: true, fmt: (m) => (m.ev_conservative === null ? "–" : (m.ev_conservative >= 0 ? "+" : "−") + Math.abs(m.ev_conservative * 100).toFixed(1) + "¢"), cls: (m) => (m.ev_conservative > 0 ? "pos" : "") },
-      { label: "Opportunity", render: (m) => (m.opportunity ? pill("good", `${m.opportunity_strategy}: ${m.opportunity_side.toUpperCase()}`) : node("span", "muted", "–")), title: (m) => m.opportunity_reason || "" },
+      { label: "Opportunity", render: (m) => (m.opportunity_status ? pill(STATUS_KIND[m.opportunity_status] || "neutral", `${m.opportunity_strategy}: ${m.opportunity_status}`) : node("span", "muted", "–")), title: (m) => m.opportunity_reason || "" },
       { label: "Data age", num: true, fmt: (m) => `${ago(m.book_age_s)} / ${ago(m.score_age_s)}`, title: (m) => `order book (${m.book_source || "?"}) / score feed; last score change ${ago(m.score_last_change_s)} ago` },
     ], rows, { empty: "No tracked tennis markets. Is the engine running?", rowClass: (m) => (m.opportunity ? "opportunity" : "") });
   }
@@ -215,9 +226,9 @@
       { label: "Ask", num: true, fmt: (r) => cents(r.ask) },
       { label: "Model / robust", num: true, fmt: (r) => `${prob(r.model_prob)} / ${prob(r.robust_prob)}` },
       { label: "EV", num: true, fmt: (r) => (r.ev === null ? "–" : (r.ev * 100).toFixed(1) + "¢") },
-      { label: "Risk decision", render: (r) => pill(r.approved ? "good" : "warning", r.approved ? "approved" : "rejected") },
+      { label: "Decision", render: (r) => statusPill(r.status || (r.approved ? "approved" : "rejected")) },
       { label: "Reasons", fmt: (r) => r.reasons.join("; ") },
-    ], s.signals, { empty: "No signals yet. Strategies only fire under strict conditions." });
+    ], s.signals, { empty: "No decisions yet. Strategies only propose trades under strict conditions." });
   }
 
   // ---------------------------------------------------------- analytics
@@ -276,6 +287,137 @@
     ], bt.runs, { empty: "No backtests stored. Run: uv run kalshi-trader backtest historical" });
   }
 
+  // ------------------------------------------------------- opportunities
+  async function renderOpportunities() {
+    await refreshHeader();
+    const params = new URLSearchParams();
+    ["strategy", "status", "category"].forEach((k) => { const v = $("op-" + k).value; if (v) params.set(k, v); });
+    const data = await api("/api/opportunities?" + params.toString());
+    const sel = $("op-strategy");
+    const known = new Set(Array.from(sel.options).map((o) => o.value));
+    data.opportunities.forEach((o) => { if (!known.has(o.strategy)) { known.add(o.strategy); sel.appendChild(Object.assign(node("option", null, o.strategy), { value: o.strategy })); } });
+    let rows = data.opportunities;
+    if ($("op-actionable").checked) rows = rows.filter((o) => o.status !== "filtered" && o.status !== "unsupported");
+    $("op-count").textContent = `${rows.length} shown of ${data.opportunities.length}`;
+    const legText = (o) => (o.legs ? o.legs.map((l) => `${l.side.toUpperCase()} ${l.market}`).join(" + ") : `${o.side.toUpperCase()} ${o.market}`);
+    table($("opportunities-table"), [
+      { label: "Age", fmt: (o) => ago(o.age_s) },
+      { label: "Strategy", render: (o) => { const d = node("div", null, o.strategy); d.appendChild(node("div", "muted small", `${o.mode}${o.stage ? " · " + o.stage : ""}`)); return d; } },
+      { label: "Market / legs", render: (o) => { const d = node("div", null, o.title || o.market); d.appendChild(node("div", "muted small", legText(o))); return d; } },
+      { label: "Bid / Ask", num: true, fmt: (o) => `${cents(o.best_bid)} / ${cents(o.best_ask)}` },
+      { label: "Fair (low)", num: true, fmt: (o) => (o.fair_value == null ? "n/a" : `${prob(o.fair_value)} (${prob(o.fair_low)})`), title: () => "model probability for the side bought; conservative bound in brackets" },
+      { label: "Size @ avg", num: true, fmt: (o) => (o.contracts ? `${num(o.contracts, 0)} @ ${cents(o.avg_price)}` : "–") },
+      { label: "Fees", num: true, fmt: (o) => money(o.fees) },
+      { label: "Exp. net (low)", num: true, fmt: (o) => signedMoney(o.expected_profit_low), cls: (o) => signClass(o.expected_profit_low) },
+      { label: "Exp. return", num: true, fmt: (o) => (o.expected_roc == null ? "–" : pct(o.expected_roc, 1)) },
+      { label: "Max risk", num: true, fmt: (o) => money(o.max_loss) },
+      { label: "Data age", num: true, fmt: (o) => `${ago(o.book_age_s)} / ${ago(o.score_age_s)}`, title: () => "order book / score (score age includes the source cache age)" },
+      { label: "Status", render: (o) => statusPill(o.status) },
+      { label: "Reason", fmt: (o) => (o.reasons || []).join("; ").slice(0, 220) },
+    ], rows, { empty: "No opportunities in the last 15 minutes. Is the engine running? See 'Why no trades?'." });
+  }
+
+  // ---------------------------------------------------------- strategies
+  async function renderStrategies() {
+    await refreshHeader();
+    const [d, e] = await Promise.all([api("/api/strategies"), api("/api/exposure")]);
+    const statusKind = (s) => ({ paper_trading: "good", ready_for_paper: "good", collecting_data: "neutral", experimental: "neutral", paused: "warning", rejected: "critical" })[s] || "neutral";
+    const m = (x) => x || {};
+    table($("strategies-table"), [
+      { label: "Strategy", render: (r) => { const d2 = node("div", null, r.name); d2.appendChild(node("div", "muted small", r.version || "")); return d2; } },
+      { label: "Mode", key: "mode" },
+      { label: "Status", render: (r) => pill(statusKind(r.status), r.status), title: (r) => r.status_reason },
+      { label: "Evidence", fmt: (r) => (r.evidence ? `${r.evidence.trades} trades / ${r.evidence.events} events · ${r.evidence.validated ? "validated" : "not validated"}` : "none yet"), title: (r) => (r.evidence ? (r.evidence.failures || []).join("; ") : "") },
+      { label: "Main P&L", num: true, fmt: (r) => signedMoney(m(r.main).total_pnl), cls: (r) => signClass(m(r.main).total_pnl) },
+      { label: "Main trades", num: true, fmt: (r) => m(r.main).trades ?? 0 },
+      { label: "Capital in use", num: true, fmt: (r) => money(r.main_capital_in_use) },
+      { label: "Shadow P&L", num: true, fmt: (r) => signedMoney(m(r.shadow).total_pnl), cls: (r) => signClass(m(r.shadow).total_pnl) },
+      { label: "Shadow trades", num: true, fmt: (r) => m(r.shadow).trades ?? 0 },
+      { label: "Win rate", num: true, fmt: (r) => pct(m(r.shadow).win_rate) },
+      { label: "Profit factor", num: true, fmt: (r) => num(m(r.shadow).profit_factor, 2) },
+      { label: "Max DD", num: true, fmt: (r) => money(m(r.shadow).max_drawdown) },
+      { label: "Expected vs realised", num: true, fmt: (r) => (m(r.shadow).expected_pnl_ex_ante == null ? "–" : `${signedMoney(m(r.shadow).expected_pnl_ex_ante)} → ${signedMoney(m(r.shadow).total_pnl)}`) },
+      { label: "Fees", num: true, fmt: (r) => money(m(r.shadow).total_fees) },
+      { label: "Today", fmt: (r) => Object.entries(r.today_counts || {}).map(([k, v]) => `${k} ${v}`).join(" · ") },
+      { label: "", render: (r) => { if (r.status === "unregistered") return node("span", "muted", "–"); const b = node("button", "btn", r.paused ? "Resume" : "Pause"); b.type = "button"; b.addEventListener("click", () => control(`strategy/${r.name}/${r.paused ? "resume" : "pause"}`, r.paused ? null : `Pause ${r.name}? It stops taking main-account entries.`)); return b; } },
+    ], d.strategies);
+    const box = $("exposure");
+    box.replaceChildren();
+    const caps = e.caps || {};
+    box.appendChild(node("p", "muted small", `Total open max loss ${money(e.total_max_loss)} of ${money(caps.aggregate)} aggregate cap · per event ${money(caps.per_event)} · per strategy ${money(caps.per_strategy)} · per correlation group ${money(caps.per_correlation_group)} · per trade ${money(caps.per_trade)}. ${e.note}`));
+    const holder = node("div", "grid-2");
+    [["By strategy", e.by_strategy], ["By event", e.by_event], ["By correlation group", e.by_correlation_group]].forEach(([label, obj]) => {
+      const c = node("div"); c.appendChild(node("h3", null, label));
+      table(c.appendChild(node("div", "table-wrap")), [{ label: "Key", key: "k" }, { label: "Max loss", num: true, fmt: (r) => money(r.v) }],
+        Object.entries(obj || {}).map(([k, v]) => ({ k, v })), { empty: "No open exposure." });
+      holder.appendChild(c);
+    });
+    box.appendChild(holder);
+  }
+
+  // --------------------------------------------------------- diagnostics
+  async function renderDiagnostics() {
+    await refreshHeader();
+    const d = await api("/api/diagnostics");
+    const box = $("diagnostics");
+    box.replaceChildren();
+    const names = Array.from(new Set([...Object.keys(d.by_strategy || {}), ...Object.keys(d.last_cycle || {})])).sort();
+    if (!names.length) { box.appendChild(node("div", "empty", "No diagnostics yet today. Start the engine: every evaluation is counted here.")); return; }
+    names.forEach((name) => {
+      const card = node("div", "card");
+      card.appendChild(node("h3", null, name));
+      const today = (d.by_strategy[name] || {}).statuses || {};
+      const last = (d.last_cycle || {})[name] || {};
+      card.appendChild(node("p", "muted small", `Today: ${Object.entries(today).map(([k, v]) => `${k} ${v.toLocaleString()}`).join(" · ") || "none"} | Last cycle: ${Object.entries(last).map(([k, v]) => `${k} ${v}`).join(" · ") || "none"}`));
+      const wrap = card.appendChild(node("div", "table-wrap"));
+      table(wrap, [
+        { label: "Count", num: true, fmt: (r) => r.count.toLocaleString() },
+        { label: "Outcome", render: (r) => statusPill(r.status) },
+        { label: "Reason (normalised)", key: "reason" },
+      ], ((d.by_strategy[name] || {}).reasons || []).filter((r) => r.reason !== "-"), { empty: "No rejections recorded." });
+      box.appendChild(card);
+    });
+    const errs = Object.entries(d.errors || {});
+    if (errs.length) box.appendChild(node("p", "neg", "Strategy errors: " + errs.map(([k, v]) => `${k} ×${v}`).join("; ")));
+  }
+
+  // ------------------------------------------------------------ research
+  async function renderResearch() {
+    await refreshHeader();
+    const r = await api("/api/research");
+    const me = r.model_evaluation || {};
+    const box = $("research-model");
+    box.replaceChildren(node("p", me.sufficient ? "" : "neg", me.note || ""));
+    const o = me.overall || {};
+    box.appendChild(node("p", "muted small", `${me.events || 0} events · ${me.observations || 0} observations · Brier model ${num(o.brier_model, 4)} vs market ${num(o.brier_market, 4)} · log loss ${num(o.logloss_model, 4)} vs ${num(o.logloss_market, 4)} · skill vs market ${o.brier_skill_vs_market == null ? "–" : pct(o.brier_skill_vs_market, 1)}`));
+    const cal = (me.calibration_model || []).map((c) => ({ label: c.bin, short: c.bin.split("-")[0], value: c.observed_frequency, ref: c.mean_predicted, note: `${c.events} events` }));
+    const chart = box.appendChild(node("div"));
+    Charts.bars(chart, cal, { yFormat: (v) => (v * 100).toFixed(0) + "%", label: "Observed frequency", refLabel: "Mean predicted", max: 1, empty: "Calibration appears once predicted markets have settled." });
+    const stages = Object.entries(me.by_stage || {}).map(([k, v]) => Object.assign({ k }, v));
+    table(box.appendChild(node("div", "table-wrap")), [
+      { label: "Stage", key: "k" }, { label: "Events", num: true, key: "events" },
+      { label: "Brier model", num: true, fmt: (x) => num(x.brier_model, 4) }, { label: "Brier market", num: true, fmt: (x) => num(x.brier_market, 4) },
+    ], stages, { empty: "No settled predictions yet." });
+    const mm = r.market_making || {};
+    const s = mm.summary;
+    const mbox = $("research-mm");
+    mbox.replaceChildren(node("p", "muted small", mm.data_kind || ""));
+    if (!s) { mbox.appendChild(node("div", "empty", "No market-making simulation data yet (strategies.market_making.mode = observe).")); return; }
+    mbox.appendChild(node("div", "kpis")).append(
+      tile("Quote cycles", compact(s.hypothetical_quote_cycles), "hypothetical quoting opportunities"),
+      tile("Simulated fills", String(s.simulated_fills), `${num(s.simulated_contracts, 0)} contracts`),
+      tile("Realised (settled)", signedMoney(s.realized_pnl_settled_markets), `${s.settled_markets} markets`, signClass(s.realized_pnl_settled_markets)),
+      tile("Unrealised (mid)", signedMoney(s.unrealized_pnl_at_mid), "open inventory at mid"),
+      tile("Adverse move", s.avg_adverse_move_after_fill == null ? "–" : cents(s.avg_adverse_move_after_fill), `${s.adverse_measurements} measured; + = against us`),
+      tile("Maker fees", money(s.maker_fees), "always charged (conservative)"),
+    );
+    table(mbox.appendChild(node("div", "table-wrap")), [
+      { label: "Time", fmt: (f) => when(f.ts) }, { label: "Market", key: "market" }, { label: "Bought", fmt: (f) => f.side.toUpperCase() },
+      { label: "Price", num: true, fmt: (f) => cents(f.price) }, { label: "Contracts", num: true, fmt: (f) => num(f.contracts, 0) },
+      { label: "Mid at fill → after", num: true, fmt: (f) => `${cents(f.mid_at_fill)} → ${cents(f.mid_after)}` },
+    ], mm.recent_fills || [], { empty: "No simulated maker fills yet." });
+  }
+
   // ------------------------------------------------------------- health
   async function renderHealth() {
     await refreshHeader();
@@ -305,8 +447,9 @@
   }
 
   // -------------------------------------------------------------- shell
-  const renderers = { overview: renderOverview, markets: renderMarkets, activity: renderActivity, analytics: renderAnalytics, health: renderHealth };
-  const intervals = { overview: 5000, markets: 2000, activity: 5000, analytics: 15000, health: 5000 };
+  const renderers = { overview: renderOverview, opportunities: renderOpportunities, strategies: renderStrategies, diagnostics: renderDiagnostics,
+    markets: renderMarkets, activity: renderActivity, analytics: renderAnalytics, research: renderResearch, health: renderHealth };
+  const intervals = { overview: 5000, opportunities: 3000, strategies: 10000, diagnostics: 5000, markets: 2000, activity: 5000, analytics: 15000, research: 30000, health: 5000 };
 
   async function refresh() {
     const view = $("view-" + state.view);
@@ -324,6 +467,7 @@
     refresh(); schedule();
   }));
   ["mk-search", "mk-tour", "mk-live", "mk-opps", "mk-sort"].forEach((id) => $(id).addEventListener("input", renderMarketsTable));
+  ["op-strategy", "op-status", "op-category", "op-actionable"].forEach((id) => $(id).addEventListener("input", renderOpportunities));
 
   async function control(action, confirmText) {
     if (confirmText && !window.confirm(confirmText)) return;

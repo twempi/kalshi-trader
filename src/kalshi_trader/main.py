@@ -233,7 +233,135 @@ def cmd_status(settings: Settings, args: argparse.Namespace) -> int:
             f"  {h.component:<14} {h.status:<12} updated {now - h.updated_ts:7.0f}s ago"
             + (f"  last error: {h.last_error[:80]}" if h.last_error else "")
         )
+    print("STRATEGIES (mode from config, status from evidence/operator)")
+    from kalshi_trader.core.registry import StrategyRegistry
+
+    registry = StrategyRegistry(repo, settings.evidence)
+    registry.reload()
+    for name, mode in _strategy_modes(settings).items():
+        row = registry.state(name)
+        status = row.status if row else "not yet registered (start the engine)"
+        reason = f" - {row.status_reason}" if row and row.status_reason else ""
+        print(f"  {name:<16} mode={mode:<8} status={status}{reason}"[:160])
     print("DATA", repo.snapshot_counts())
+    return 0
+
+
+def _strategy_modes(settings: Settings) -> dict[str, str]:
+    cfg = settings.strategies
+    return {
+        "tennis_model": cfg.tennis_model.mode,
+        "cross_market": cfg.cross_market.mode,
+        "late_match": cfg.late_match.mode,
+        "price_threshold": cfg.price_threshold.mode,
+        "market_making": cfg.market_making.mode,
+    }
+
+
+def cmd_strategies(settings: Settings, args: argparse.Namespace) -> int:
+    from kalshi_trader.core.registry import StrategyRegistry
+
+    repo = _repo(settings)
+    registry = StrategyRegistry(repo, settings.evidence)
+    registry.reload()
+    modes = _strategy_modes(settings)
+    if args.action in ("pause", "resume"):
+        if not args.name or args.name not in modes:
+            print(f"usage: kalshi-trader strategies {args.action} <{'|'.join(modes)}>")
+            return 1
+        ok = registry.set_paused(
+            args.name, args.action == "pause", f"{args.action}d from CLI", mode=modes[args.name]
+        )
+        if not ok:
+            print(f"{args.name} is not registered yet; start the engine once first")
+            return 1
+        repo.record_event("warning", "cli", f"strategy {args.name} {args.action}d")
+        print(f"ok: {args.name} {args.action}d (persists across restarts)")
+        return 0
+    rows = []
+    for name, mode in modes.items():
+        row = registry.state(name)
+        evidence = json.loads(row.evidence_json) if row and row.evidence_json else {}
+        rows.append(
+            {
+                "strategy": name,
+                "mode": mode,
+                "status": row.status if row else "unregistered",
+                "reason": row.status_reason if row else "",
+                "version": f"{row.version}+{row.config_hash[:8]}" if row else "",
+                "evidence_trades": evidence.get("trades"),
+                "validated": evidence.get("validated"),
+            }
+        )
+    if args.json:
+        print(json.dumps(rows, indent=1))
+        return 0
+    print("Modes come from config (strategies.<name>.mode = off|observe|paper).")
+    for r in rows:
+        print(
+            f"{r['strategy']:<16} mode={r['mode']:<8} status={r['status']:<16} "
+            f"trades={r['evidence_trades']} validated={r['validated']}  {r['reason']}"[:200]
+        )
+    return 0
+
+
+def cmd_diagnostics(settings: Settings, args: argparse.Namespace) -> int:
+    from sqlalchemy import select
+
+    from kalshi_trader.database.tables import DiagnosticCountRow
+
+    repo = _repo(settings)
+    with repo.db.session() as s:
+        stmt = select(DiagnosticCountRow).order_by(DiagnosticCountRow.day.desc())
+        rows = [r for r in s.scalars(stmt) if not args.day or r.day == args.day]
+    if not rows:
+        print("no diagnostics recorded yet (the engine writes them while running)")
+        return 0
+    day = args.day or rows[0].day
+    print(f"Opportunity outcomes on {day} (UTC). Reasons are normalised (numbers -> #).")
+    by_strategy: dict[str, list[Any]] = {}
+    for r in rows:
+        if r.day == day:
+            by_strategy.setdefault(r.strategy, []).append(r)
+    for strategy, items in sorted(by_strategy.items()):
+        totals: dict[str, int] = {}
+        for r in items:
+            totals[r.status] = totals.get(r.status, 0) + r.count
+        print(f"\n{strategy}: " + ", ".join(f"{k}={v}" for k, v in sorted(totals.items())))
+        for r in sorted(items, key=lambda r: -r.count)[: args.top]:
+            print(f"  {r.count:>8}  {r.status:<11} {r.reason}"[:200])
+    return 0
+
+
+def cmd_research(settings: Settings, args: argparse.Namespace) -> int:
+    from kalshi_trader.database.db import Database
+
+    db = Database(settings.db_path)
+    if args.kind == "model-eval":
+        from kalshi_trader.research.model_eval import (
+            evaluate_predictions,
+            one_market_per_event,
+            predictions_from_db,
+        )
+
+        if args.source == "live":
+            preds = predictions_from_db(db)
+            source = "forward predictions recorded live (model_predictions table)"
+        else:
+            from kalshi_trader.backtesting.replay import replay
+
+            preds = replay(settings, db, strategies=[]).predictions
+            source = "replay of recorded observations"
+        report = {
+            "data_source": source,
+            "benchmark": "market-implied probability (YES mid) = Baseline 3",
+            **evaluate_predictions(one_market_per_event(preds)),
+        }
+    else:
+        from kalshi_trader.research.sensitivity import run_sensitivity
+
+        report = {"data_source": "replay of recorded observations", **run_sensitivity(settings, db)}
+    print(json.dumps(report, indent=1, default=str))
     return 0
 
 
@@ -313,7 +441,15 @@ def cmd_backtest(settings: Settings, args: argparse.Namespace) -> int:
     else:
         from kalshi_trader.backtesting.replay import run_replay_backtest
 
-        report = run_replay_backtest(settings, test_fraction=args.test_fraction, grid=args.grid)
+        report = run_replay_backtest(
+            settings,
+            test_fraction=args.test_fraction,
+            validation_fraction=args.validation_fraction,
+            grid=args.grid,
+            embargo_s=args.embargo_hours * 3600,
+            evaluate_test=not args.no_test,
+            market_making=args.market_making,
+        )
     print(json.dumps(report, indent=1, default=str))
     return 0
 
@@ -368,7 +504,7 @@ def cmd_reset_account(settings: Settings, args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="kalshi-trader",
-        description="Kalshi tennis market research and PAPER trading (never places real orders).",
+        description="Kalshi multi-strategy research and PAPER trading (never places real orders).",
     )
     parser.add_argument("--log-level", default=None, help="override KT_LOG_LEVEL")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -377,7 +513,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--record-only",
         action="store_true",
-        help="record data and show the dashboard, but never simulate trades",
+        help="record data and evaluate strategies, but never simulate any trade (not even "
+        "shadow ledgers)",
     )
     p.add_argument("--no-dashboard", action="store_true", help="do not serve the dashboard")
     p.set_defaults(func=cmd_run)
@@ -414,7 +551,45 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--cache-dir", default=None, help="historical: cache downloaded candles here")
     p.add_argument("--grid", action="store_true", help="replay: sweep a parameter grid")
+    p.add_argument(
+        "--validation-fraction", type=float, default=0.2, help="replay: validation share"
+    )
+    p.add_argument(
+        "--embargo-hours",
+        type=float,
+        default=1.0,
+        help="replay: drop events first seen within this long after a split boundary",
+    )
+    p.add_argument(
+        "--no-test",
+        action="store_true",
+        help="replay: evaluate train/validation only (keep the test split untouched)",
+    )
+    p.add_argument(
+        "--market-making", action="store_true", help="replay: include the MM research sim"
+    )
     p.set_defaults(func=cmd_backtest)
+
+    p = sub.add_parser("strategies", help="list strategies, or pause/resume one")
+    p.add_argument("action", nargs="?", default="list", choices=["list", "pause", "resume"])
+    p.add_argument("name", nargs="?", default=None)
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_strategies)
+
+    p = sub.add_parser("diagnostics", help="why strategies are (not) trading, by reason")
+    p.add_argument("--day", default=None, help="UTC day YYYY-MM-DD (default: latest)")
+    p.add_argument("--top", type=int, default=10)
+    p.set_defaults(func=cmd_diagnostics)
+
+    p = sub.add_parser("research", help="model evaluation and sensitivity analysis")
+    p.add_argument("kind", choices=["model-eval", "sensitivity"])
+    p.add_argument(
+        "--source",
+        choices=["live", "replay"],
+        default="replay",
+        help="model-eval: forward predictions recorded live, or a replay",
+    )
+    p.set_defaults(func=cmd_research)
 
     p = sub.add_parser("export", help="export simulated trades to CSV")
     p.add_argument("--out", default="paper_trades.csv")
