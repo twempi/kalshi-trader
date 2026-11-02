@@ -27,6 +27,7 @@ import copy
 import hashlib
 import time
 from collections.abc import Callable
+from dataclasses import replace
 from decimal import ROUND_CEILING, Decimal
 from typing import Any
 
@@ -398,9 +399,11 @@ class TradingCore:
 
     def _execute_basket(self, opp: Opportunity, broker: PaperBroker, ctx: ScanContext) -> None:
         """Legs are bought one at a time, least liquid first (most likely to fail first,
-        which minimises unhedged exposure). Later legs only buy what earlier legs filled.
-        If legs end up unequal, the excess is sold back into the bids immediately and any
-        contracts that cannot be sold remain as directional positions at full max loss."""
+        which minimises unhedged exposure). Later legs only buy what earlier legs filled and
+        may only take ``paper.basket_later_leg_liquidity_fraction`` of their displayed depth
+        (a deliberate stress: real books move between legs). If legs end up unequal, the
+        excess is sold back into the bids immediately; contracts that cannot be sold remain
+        as directional positions carrying their full cost as maximum loss."""
         group_id = _client_id(broker.account_id, "basket", opp.opportunity_id, int(ctx.now * 1000))
         group_id = hashlib.blake2b(group_id.encode(), digest_size=12).hexdigest()
         legs = sorted(
@@ -420,6 +423,11 @@ class TradingCore:
             intent = self._intent(
                 opp, leg, broker, target, max_cash, group_id, opp.max_loss * share
             )
+            if done:  # later legs: the book may have moved while earlier legs executed
+                intent = replace(
+                    intent,
+                    liquidity_multiplier=self.settings.paper.basket_later_leg_liquidity_fraction,
+                )
             report = broker.execute_buy(intent, book)
             filled = report.fill.filled if report.fill is not None else ZERO
             done.append((leg, report.trade_id, filled))

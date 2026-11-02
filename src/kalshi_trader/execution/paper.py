@@ -72,6 +72,8 @@ class OrderIntent:
     category: str | None = None
     stage: str | None = None
     correlation_group: str | None = None
+    # Extra multiplier on displayed depth for this order (basket legs after the first).
+    liquidity_multiplier: Decimal = ONE
 
 
 @dataclass(frozen=True)
@@ -314,7 +316,8 @@ class PaperBroker:
                     intent.contracts,
                     fee_rate=self.fees.taker_rate,
                     fee_multiplier=intent.fee_multiplier,
-                    liquidity_fraction=self.paper.displayed_liquidity_fraction,
+                    liquidity_fraction=self.paper.displayed_liquidity_fraction
+                    * intent.liquidity_multiplier,
                     max_cash=max_cash,
                 )
                 order = PaperOrderRow(

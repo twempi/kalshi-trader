@@ -184,21 +184,23 @@ class TennisModelStrategy(Strategy):
 
         best: Opportunity | None = None
         best_ev = float("-inf")
-        last_reason = "no executable option"
+        why: list[str] = []
+        closest: tuple[float, str] | None = None  # best sub-threshold edge, for diagnostics
         for player in (0, 1):
             fair = self.model.fair_value(ctx, player)
             for option in ctx.options_for(player):
+                label = f"{option.side.upper()} {option.market.ticker}"
                 if not option.market.tradable:
-                    last_reason = "market not active"
+                    why.append(f"{label}: market not active")
                     continue
                 ask = option.book.best_ask(option.side)
                 spread = option.book.spread(option.side)
                 if ask is None or spread is None or spread > s.max_spread:
-                    last_reason = f"spread {spread} > {s.max_spread}"
+                    why.append(f"{label}: spread {spread} > {s.max_spread}")
                     continue
                 price = ask[0]
                 if not (s.min_price <= price <= s.max_price):
-                    last_reason = f"ask {price} outside [{s.min_price}, {s.max_price}]"
+                    why.append(f"{label}: ask {price} outside [{s.min_price}, {s.max_price}]")
                     continue
                 mult = option.market.fee_multiplier
                 fee_pc = fee_per_contract_estimate(
@@ -206,11 +208,11 @@ class TennisModelStrategy(Strategy):
                 )
                 ev = fair.p_low - float(price + fee_pc)
                 if ev < float(s.min_edge):
-                    if ev > best_ev and best is None:
-                        best_ev = ev
-                        last_reason = (
+                    if closest is None or ev > closest[0]:
+                        closest = (
+                            ev,
                             f"best conservative edge {ev:+.3f} < {s.min_edge} "
-                            f"(q={fair.p_low:.3f}, ask {price})"
+                            f"({label}: q={fair.p_low:.3f}, ask {price})",
                         )
                     continue
                 cap = max_price_for_edge(
@@ -222,7 +224,7 @@ class TennisModelStrategy(Strategy):
                     ceiling=min(Decimal("0.99"), price + s.limit_slippage),
                 )
                 if cap is None or cap < price:
-                    last_reason = "no limit price keeps the edge"
+                    why.append(f"{label}: no limit price keeps the edge")
                     continue
                 limit = snap_price_down(
                     min(price + s.limit_slippage, cap), option.market.price_ranges
@@ -243,5 +245,6 @@ class TennisModelStrategy(Strategy):
                 if best is None or ev > best_ev:
                     best, best_ev = opp, ev
         if best is None:
-            return [self.note(ctx, DecisionStatus.FILTERED, last_reason, stage=stage)]
+            reason = closest[1] if closest else ("; ".join(why) or "no executable option")
+            return [self.note(ctx, DecisionStatus.FILTERED, reason, stage=stage)]
         return [best]

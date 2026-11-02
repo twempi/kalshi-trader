@@ -347,6 +347,10 @@ class PaperSettings(BaseModel):
     starting_balance: Money = Decimal("1000")
     # Only this share of displayed depth is assumed fillable (others compete for it).
     displayed_liquidity_fraction: Money = Decimal("0.5")
+    # Multi-leg baskets: legs after the first may only take this share of the (already
+    # haircut) displayed depth, because books move while earlier legs execute. Within one
+    # book snapshot a later leg could otherwise never fail, hiding legging risk.
+    basket_later_leg_liquidity_fraction: Money = Decimal("0.5")
     enable_exits: bool = False
     take_profit_bid: Money = Decimal("0.99")
 
