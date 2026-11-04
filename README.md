@@ -64,7 +64,8 @@ the requirements.
 | Per-strategy shadow ledgers + evidence-based strategy lifecycle | Unit-tested; run live |
 | Paper broker: book-walking fills, exact fees, partial fills, basket unwinds, settlement | Unit-tested with hand-checked numbers |
 | Event-driven replay with chronological settlement | Tested (capital-recycling scenario) and run on the recorded database |
-| Model evaluation vs market, sensitivity analysis | Implemented; current data (3 settled events) is far too small for conclusions |
+| Model evaluation vs market, sensitivity analysis | Implemented; 894 settled matches recorded on the server by 2026-11-04 |
+| Probability calibration of the tennis model (held-out fit, decision check, `research calibrate`) | Implemented and unit-tested; not yet fitted on the server's data, so off in the shipped config |
 | Dashboard: overview, opportunities, strategies, diagnostics, research, markets, analytics, health | Verified in a browser against live-recorded data |
 | NixOS service module (nix-inputs) / systemd user unit | Unchanged; NixOS module tested in VMs earlier |
 
@@ -108,7 +109,7 @@ the requirements.
 | `src/kalshi_trader/risk/manager.py` | Market/portfolio checks, exposure caps, risk budget, persistent safety state |
 | `src/kalshi_trader/execution/` | Fee formula, fill simulation, paper broker (main + shadow accounts) |
 | `src/kalshi_trader/backtesting/` | Replay (event-driven), historical price-only backtest, metrics, significance |
-| `src/kalshi_trader/research/` | Event/time splits, model evaluation vs market, sensitivity analysis |
+| `src/kalshi_trader/research/` | Event/time splits, model evaluation vs market, probability calibration fit, sensitivity analysis |
 | `src/kalshi_trader/market_data/` | Tennis + generic discovery, order books, recorder, pre-match capture |
 | `src/kalshi_trader/api/`, `tennis/`, `models/` | Kalshi clients and schemas, tennis scoring and parsing, Markov model (unchanged design) |
 | `src/kalshi_trader/engine.py` | Async loops, task supervision/restart, settlement monitor |
@@ -226,6 +227,14 @@ Unchanged in design (`src/kalshi_trader/models/`), now with explicit validation 
 - *Uncertainty*: posterior draws; decisions use the 10th percentile, minimised over all scores
   reachable within `latency_points` (1) further points (latency guard).
 - *Retirements*: a small per-game hazard pulls probabilities toward ½.
+- *Calibration* (optional, `[strategies.tennis_model.calibration]`): before the strategy trades,
+  `logit(p) = slope · logit(p_model) + market_weight · logit(p_market)`, applied to the point
+  estimate and the conservative bound alike. `slope` > 1 corrects a model that is too timid;
+  `market_weight` > 0 shrinks the estimate toward the live mid, so only larger disagreements
+  clear the edge. The shipped values (1, 0) are the raw model. Fit them with
+  `research calibrate` (below); never set them by hand. Recorded predictions stay raw, so
+  refits always start from the model itself. Changing them changes the strategy's version tag,
+  so its evidence starts again.
 
 The independent information versus the live market is the in-play state (score, server, serve
 statistics) propagated through the Markov chain; the market enters only through the pre-match
@@ -326,6 +335,7 @@ uv run kalshi-trader diagnostics          # why each strategy is (not) trading t
 uv run kalshi-trader backtest replay      # event-driven replay of your recordings (see below)
 uv run kalshi-trader research model-eval --source live    # forward model vs market calibration
 uv run kalshi-trader research model-eval --source replay  # same, on replayed recordings
+uv run kalshi-trader research calibrate                   # fit + held-out check of a probability calibration
 uv run kalshi-trader research sensitivity                 # assumption sensitivity (slow: ~12 replays)
 ```
 
@@ -347,9 +357,14 @@ Start `uv run kalshi-trader run` (or `uv run kalshi-trader dashboard`) and open
 | Opportunities | Scanner of every opportunity evaluated in the last 15 minutes: strategy and mode, market or basket legs, bid/ask, fair value (conservative), size and average fill, fees, expected net profit, expected return on capital, maximum risk, data ages, decision status and rejection reason. Filter by strategy, status and category |
 | Strategies | Strategy comparison (main account vs standalone shadow ledgers: P&L, trades, win rate, profit factor, drawdown, capital in use, fees, expected vs realised, evidence status, today's outcome counts) with per-strategy Pause/Resume, and exposure by strategy/event/correlation group against the caps |
 | Why no trades? | Today's outcome counts and most common normalised rejection reasons per strategy, plus the last one-second cycle |
-| Research | Forward model-vs-market calibration (event-weighted Brier, log loss, reliability chart, by stage) and the market-making research simulation (hypothetical quote cycles vs simulated fills, adverse selection, P&L) |
+| Research | Forward model-vs-market calibration (Brier, log loss, reliability chart, by stage), the probability-calibration fit (candidates scored on held-out matches, whether the model adds anything to the market price, a decision check, and the suggested settings) and the market-making research simulation (hypothetical quote cycles vs simulated fills, adverse selection, P&L) |
 | Live tennis markets | One row per player contract: score, server, games to win, bid/ask, spread, depth, market vs model vs robust-low probability, conservative EV, flagged opportunities, data age. Filter by text, tour, live matches, opportunities; sort by EV, match progress, price, liquidity or start time |
 | Trading activity | Main-account open positions, cumulative P&L, completed simulated trades with CSV export, and recent decisions that reached the risk/allocation stage |
+
+Raw data for your own analysis (GET, no login, same host restrictions as the dashboard):
+`/api/export/predictions.csv` (every settled forward prediction with its outcome),
+`/api/export/trades.csv?ledger=tennis_model` and `/api/trades?ledger=tennis_model` (a
+strategy's shadow ledger; without `ledger` they return the main account).
 | Analytics | Equity curve, P&L over time, drawdown, win rate by entry price vs break-even, outcome distribution, performance by strategy, a "skill or luck?" significance panel, stored backtest runs |
 | System health | Recorded-data counts and per-component status (Kalshi REST and WebSocket, score feed, exchange status, engine loops): last update and success, last error, details such as request counts, failures and latency; components that stop updating are marked stale. Recent warnings and errors |
 
@@ -584,10 +599,45 @@ uv run kalshi-trader research model-eval --source replay
 uv run kalshi-trader research sensitivity
 ```
 
-Statistics are event-weighted (each match counts once; the two complementary markets of a
-match are not double-counted) and reported next to the market-implied benchmark, with a
-cluster-bootstrap CI of the paired Brier difference. Fewer than 30 settled events are flagged
-as insufficient.
+Statistics use one market per match (the two complementary markets are not double-counted),
+weigh every observation the same, and are reported next to the market-implied benchmark, with
+a CI of the paired Brier difference that resamples whole matches. Fewer than 30 settled events
+are flagged as insufficient.
+
+Until 2026-11-04 every match had a total weight of 1 instead (weight 1/n for a match with n
+observations). That is biased because n depends on how the match ends: matches the favourite
+wins quickly have few observations, so each of them counts more. In a simulation of 40,000
+matches with exact Markov probabilities (a perfectly calibrated forecaster), the old
+weighting showed underdogs at 10–40% winning 2–3 points less often than predicted and
+favourites at 60–90% 2–3 points more often. Equal observation weights showed no bias (within
+±0.5 points). Calibration tables from before that date overstate how timid the model is.
+
+### 4. Probability calibration
+
+```bash
+uv run kalshi-trader research calibrate                    # forward predictions recorded live
+uv run kalshi-trader research calibrate --test-fraction 0.3 --embargo-hours 1
+```
+
+The same report is on the dashboard's Research tab (`/api/research/calibration`, recomputed
+at most every 10 minutes), so it can be read on the server without `sudo`. It uses the
+observations the strategy could trade on: its stages and tours, the pre-match prior, spread
+≤ `max_spread`, and a mid inside the buyable band. It fits three logistic recalibrations on the
+earlier 70% of matches and scores them on the later 30%:
+
+- `model_slope`: `logit(p) = slope · logit(p_model)`;
+- `market_anchored`: `slope · logit(p_model) + market_weight · logit(p_market)`;
+- `market_slope`: a recalibrated market. This is the benchmark, not a candidate: it never
+  disagrees with the market.
+
+"Model adds information" compares `market_anchored` with `market_slope` on the held-out
+matches. If the CI does not exclude zero, the model has shown nothing the price did not
+already contain. The decision check buys one contract at the first observation per held-out
+match that clears the entry rule (conservative probability − ask − taker fee ≥ `min_edge`, ask
+inside the price band) and holds it to settlement, for the raw model and each candidate.
+A candidate is recommended only if it beats the raw model on held-out log loss with a CI that
+excludes zero. Its parameters are then refitted on all matches and printed as a
+`[strategies.tennis_model.calibration]` block to paste into `config/settings.toml`.
 
 ## Strategy evaluation and selection
 
@@ -658,7 +708,8 @@ correlated caps, allocation of correlated same-event opportunities, ranking unde
 position limit, observe vs paper modes, restart duplicate prevention, basket legging failures
 and unwinds, cross-market relationship verification (bracket gaps, MECNET, ladders, tennis
 pairs + persistence), market-making trade-through fills, score regression/staleness guards,
-event splits, event-weighted calibration, schema migration, and a replay where chronological
+event splits, observation-weighted calibration (exact on a calibrated forecaster), the
+probability-calibration map, fit and report, schema migration, and a replay where chronological
 settlement recycles capital that end-of-replay settlement would have blocked.
 
 The suite also covers API parsing (with **real captured Kalshi responses** in `tests/fixtures/`),
@@ -751,11 +802,15 @@ None is required. Scraping sites in breach of their terms is deliberately not do
 | `late_match`, shadow | 5 | −$10.81 | 4 small wins and one −$19.24 loss (average entry 89¢) |
 
 - Contracts bought under 20¢ (21 of the 57) lost 18% of their cost; trades at 20¢ or more made
-  money. Across 557 settled matches the model overrated 10–30% underdogs by 3–5 points.
-  This is why `tennis_model.min_price` is now 0.20.
-- Model vs market over 557 settled matches (forward predictions): Brier 0.1201 (model) vs
-  0.1179 (market mid). Paired difference +0.0022, 95% CI [+0.0001, +0.0043], so the market is
-  still slightly more accurate on average.
+  money. This is why `tennis_model.min_price` is now 0.20. The calibration table then also
+  showed the model overrating 10–30% underdogs by 3–5 points, but that table weighted every
+  match equally. That weighting alone makes a calibrated forecaster look about 3 points too
+  timid (see [Model evaluation](#3-model-evaluation-and-sensitivity)), and the market's own
+  table showed a similar gap. Only part of it is the model.
+- Model vs market over 557 settled matches (forward predictions, the old match weighting):
+  Brier 0.1201 (model) vs 0.1179 (market mid). Paired difference +0.0022, 95% CI [+0.0001,
+  +0.0043], so the market is still slightly more accurate on average. By 2026-11-04 (894
+  matches) it was 0.1175 vs 0.1153, CI [+0.0005, +0.0039].
 - Fees plus half the spread cost 1.85¢ per contract on these trades, 8% of the average price.
   At about 33 trades a day that hurdle dominates: with no real edge, shadow-size trading loses
   about $14 a day on $1,000.

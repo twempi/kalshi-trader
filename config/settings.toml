@@ -76,6 +76,10 @@ late_games_from_victory = 3
 require_pre_match_prior = true
 min_effective_sample_size = 50
 
+[strategies.tennis_model.calibration]   # logit(p) = slope*logit(p_model) + market_weight*logit(mid)
+slope = 1.0                         # 1.0 / 0.0 = the raw model. Fit with `research calibrate` or the
+market_weight = 0.0                 # dashboard's Research tab; changing these resets the evidence
+
 [strategies.cross_market]        # B: baskets with verified settlement relationships
 mode = "paper"
 min_edge = 0.01                  # $/basket unit after all fees

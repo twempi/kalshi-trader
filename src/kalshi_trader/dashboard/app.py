@@ -52,6 +52,21 @@ from kalshi_trader.database.tables import (
 
 STATIC_DIR = Path(__file__).parent / "static"
 ENGINE_STALE_S = 15.0
+CALIBRATION_CACHE_S = 600.0  # the calibration fit reads every recorded prediction
+PREDICTION_FIELDS = (
+    "ts",
+    "event",
+    "market",
+    "tour",
+    "stage",
+    "prior_source",
+    "p_model",
+    "p_model_low",
+    "yes_bid",
+    "yes_ask",
+    "score_age_s",
+    "outcome",
+)
 DATA_LABEL = (
     "SIMULATED paper trading on real, live Kalshi order books. "
     "No real orders are placed. Model probabilities are estimates."
@@ -133,6 +148,15 @@ def create_app(settings: Settings, db: Database | None = None) -> FastAPI:
     def accounts() -> dict[str, PaperAccountRow]:
         with database.session() as s:
             return {(a.name or "main"): a for a in s.scalars(select(PaperAccountRow))}
+
+    def ledger_account_id(ledger: str | None) -> int:
+        """``main`` (the default) or a strategy name, for that strategy's shadow ledger."""
+        if not ledger or ledger == "main":
+            return MAIN_ACCOUNT_ID
+        account = accounts().get(f"shadow:{ledger}") if ledger in STRATEGY_NAMES else None
+        if account is None:
+            raise HTTPException(404, "unknown ledger: use main or a strategy name")
+        return account.id
 
     def marks() -> dict[tuple[str, str], float]:
         result = {}
@@ -263,9 +287,10 @@ def create_app(settings: Settings, db: Database | None = None) -> FastAPI:
         return {"positions": rows}
 
     @app.get("/api/trades")
-    def trades(limit: int = 500) -> dict[str, Any]:
-        rows = [trade_to_dict(t) for t in closed_trades()][-max(1, min(limit, 5000)) :]
-        return {"trades": list(reversed(rows))}
+    def trades(limit: int = 500, ledger: str | None = None) -> dict[str, Any]:
+        account_id = ledger_account_id(ledger)
+        rows = [trade_to_dict(t) for t in closed_trades(account_id)][-max(1, min(limit, 5000)) :]
+        return {"ledger": ledger or "main", "trades": list(reversed(rows))}
 
     def opportunity_rows(
         max_age_s: float, limit: int, **filters: str | None
@@ -525,6 +550,24 @@ def create_app(settings: Settings, db: Database | None = None) -> FastAPI:
             },
         }
 
+    calibration_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+
+    @app.get("/api/research/calibration")
+    def research_calibration() -> dict[str, Any]:
+        """Fit and held-out check of the tennis model's probability calibration."""
+        from kalshi_trader.research.calibration import calibration_report
+        from kalshi_trader.research.model_eval import predictions_from_db
+
+        cached = calibration_cache.get("report")
+        if cached is not None and time.time() - cached[0] < CALIBRATION_CACHE_S:
+            return cached[1]
+        report = calibration_report(
+            predictions_from_db(database), settings.strategies.tennis_model, settings.fees
+        )
+        report["computed_ts"] = time.time()
+        calibration_cache["report"] = (time.time(), report)
+        return report
+
     @app.get("/api/analytics")
     def analytics() -> dict[str, Any]:
         with database.session() as s:
@@ -621,17 +664,44 @@ def create_app(settings: Settings, db: Database | None = None) -> FastAPI:
         }
 
     @app.get("/api/export/trades.csv")
-    def export_trades() -> StreamingResponse:
+    def export_trades(ledger: str | None = None) -> StreamingResponse:
+        account_id = ledger_account_id(ledger)
         buffer = io.StringIO()
-        rows = [trade_to_dict(t) for t in closed_trades() + open_trades()]
+        rows = [trade_to_dict(t) for t in closed_trades(account_id) + open_trades(account_id)]
         writer = csv.DictWriter(buffer, fieldnames=list(TRADE_FIELDS))
         writer.writeheader()
         writer.writerows(rows)
         buffer.seek(0)
+        name = "paper_trades.csv" if account_id == MAIN_ACCOUNT_ID else f"shadow_{ledger}.csv"
         return StreamingResponse(
             iter([buffer.getvalue()]),
             media_type="text/csv",
-            headers={"Content-Disposition": "attachment; filename=paper_trades.csv"},
+            headers={"Content-Disposition": f"attachment; filename={name}"},
+        )
+
+    @app.get("/api/export/predictions.csv")
+    def export_predictions() -> StreamingResponse:
+        """Settled forward predictions with their outcomes (raw model, both markets)."""
+        from kalshi_trader.research.model_eval import predictions_from_db
+
+        preds = predictions_from_db(database)
+
+        def chunks() -> Any:
+            buffer = io.StringIO()
+            writer = csv.writer(buffer)
+            writer.writerow(PREDICTION_FIELDS)
+            for start in range(0, len(preds), 2000):
+                for p in preds[start : start + 2000]:
+                    writer.writerow([getattr(p, f) for f in PREDICTION_FIELDS])
+                yield buffer.getvalue()
+                buffer.seek(0)
+                buffer.truncate()
+            yield buffer.getvalue()
+
+        return StreamingResponse(
+            chunks(),
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=model_predictions.csv"},
         )
 
     control_networks = [ipaddress.ip_network(str(n)) for n in settings.dashboard.control_networks]

@@ -20,6 +20,11 @@ the evidence of mispricing. Today exactly one model is implemented:
   strength; the in-play information (score, server, live serve statistics) is independent of
   the live market price, which is what the strategy compares against.
 
+The model's probabilities can be recalibrated before use (``calibration``, fitted on settled
+forward predictions by ``research.calibration``). With a ``market_weight`` the estimate is
+shrunk toward the live mid: the market is then a prior, and the evidence of mispricing is
+still the model's disagreement with it, which must be large enough to survive the shrinkage.
+
 Stages: ``prematch`` is unsupported (the only pre-match strength information available is
 the market price itself), ``early`` = first set, ``late`` = a player within
 ``late_games_from_victory`` games of winning, ``mid`` = otherwise.
@@ -31,10 +36,15 @@ from abc import ABC, abstractmethod
 from decimal import Decimal
 from itertools import pairwise
 
-from kalshi_trader.config import FeeSettings, TennisModelStrategySettings
+from kalshi_trader.config import (
+    FeeSettings,
+    ProbabilityCalibrationSettings,
+    TennisModelStrategySettings,
+)
 from kalshi_trader.core.opportunity import DecisionStatus, FairValue, Leg, Opportunity
 from kalshi_trader.execution.fees import fee_per_contract_estimate
 from kalshi_trader.execution.fills import snap_price_down
+from kalshi_trader.models.calibration import calibrate
 from kalshi_trader.models.ev import max_price_for_edge
 from kalshi_trader.strategies.base import MatchContext, ScanContext, Strategy
 from kalshi_trader.tennis.state import MatchState, MatchStatus
@@ -53,6 +63,17 @@ def match_stage(score: MatchState | None, late_games: int) -> str:
     if distances and min(distances) <= late_games:
         return "late"
     return "mid"
+
+
+def market_probability(ctx: MatchContext, player: int) -> float | None:
+    """The market's probability that ``player`` wins: their YES mid, else 1 - the opponent's."""
+    for index in (player, 1 - player):
+        ticker = ctx.match.market_tickers[index]
+        book = ctx.books.get(ticker) if ticker else None
+        mid = book.mid("yes") if book is not None else None
+        if mid is not None:
+            return float(mid) if index == player else 1.0 - float(mid)
+    return None
 
 
 def probability_band(p: float) -> str:
@@ -77,9 +98,15 @@ class FairValueModel(ABC):
 class TennisMarkovFairValue(FairValueModel):
     name = "tennis_markov"
 
-    def __init__(self, require_pre_match_prior: bool, min_ess: float) -> None:
+    def __init__(
+        self,
+        require_pre_match_prior: bool,
+        min_ess: float,
+        calibration: ProbabilityCalibrationSettings | None = None,
+    ) -> None:
         self.require_pre_match_prior = require_pre_match_prior
         self.min_ess = min_ess
+        self.calibration = calibration or ProbabilityCalibrationSettings()
 
     def unsupported_reason(self, ctx: MatchContext) -> str | None:
         score, estimate = ctx.score, ctx.estimate
@@ -95,6 +122,8 @@ class TennisMarkovFairValue(FairValueModel):
             return "no pre-match price prior (tour-average prior is not specific enough)"
         if estimate.effective_sample_size < self.min_ess:
             return f"posterior degenerate (ESS {estimate.effective_sample_size:.0f})"
+        if self.calibration.market_weight and market_probability(ctx, 0) is None:
+            return "no two-sided book for the market-anchored calibration"
         return None
 
     def fair_value(self, ctx: MatchContext, player: int) -> FairValue:
@@ -102,18 +131,38 @@ class TennisMarkovFairValue(FairValueModel):
         assert est is not None and ctx.score is not None
         prob = est.for_player(player)
         p_high = est.p1_robust_high if player == 0 else 1.0 - est.p1_robust_low
+        details: dict[str, object] = {
+            "prior": est.prior.source,
+            "std": round(est.p1_std, 4),
+            "latency_points": est.latency_points,
+            "credible_quantile": est.credible_quantile,
+        }
+        cal = self.calibration
+        if cal.is_identity:
+            return FairValue(
+                p=prob.point,
+                p_low=prob.robust_low,
+                p_high=p_high,
+                source=self.name,
+                as_of_ts=ctx.score.received_ts,
+                details=details,
+            )
+        market = market_probability(ctx, player) if cal.market_weight else None
+        details.update(
+            {
+                "p_model": round(prob.point, 4),
+                "p_low_model": round(prob.robust_low, 4),
+                "p_market": None if market is None else round(market, 4),
+                "calibration": {"slope": cal.slope, "market_weight": cal.market_weight},
+            }
+        )
         return FairValue(
-            p=prob.point,
-            p_low=prob.robust_low,
-            p_high=p_high,
-            source=self.name,
+            p=calibrate(prob.point, cal, market),
+            p_low=calibrate(prob.robust_low, cal, market),
+            p_high=calibrate(p_high, cal, market),
+            source=f"{self.name}+calibrated",
             as_of_ts=ctx.score.received_ts,
-            details={
-                "prior": est.prior.source,
-                "std": round(est.p1_std, 4),
-                "latency_points": est.latency_points,
-                "credible_quantile": est.credible_quantile,
-            },
+            details=details,
         )
 
 
@@ -128,7 +177,9 @@ class TennisModelStrategy(Strategy):
         super().__init__(settings, fees)
         self.settings: TennisModelStrategySettings = settings
         self.model: FairValueModel = TennisMarkovFairValue(
-            settings.require_pre_match_prior, settings.min_effective_sample_size
+            settings.require_pre_match_prior,
+            settings.min_effective_sample_size,
+            settings.calibration,
         )
 
     def scan(self, ctx: ScanContext) -> list[Opportunity]:

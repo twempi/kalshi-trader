@@ -17,9 +17,14 @@ mid) so the model is always compared with the obvious benchmark:
 * an *executable* check: when the model's conservative probability exceeded the YES ask
   (or the NO ask for the other side), what did buying at that ask actually return?
 
-Observations of one match are strongly dependent, so every statistic weights each **event**
-equally (an event's observations share weight 1), and CIs resample whole events. Results
-with fewer than ``MIN_EVENTS`` events are labelled insufficient.
+Every observation weighs the same, and CIs resample whole events because observations of one
+match are strongly dependent. Observations are taken at score changes, which are stopping
+times, so for a calibrated forecaster the observation-weighted error in any probability bin
+has mean zero. Giving each *event* a total weight of 1 instead (weight 1/n for an event
+with n observations) is biased, because n depends on the future: matches the favourite
+wins quickly have few observations, so each counts more, and a perfectly calibrated
+forecaster then looks about 3 points too timid (underdogs "win" less, favourites more).
+Results with fewer than ``MIN_EVENTS`` events are labelled insufficient.
 """
 
 from __future__ import annotations
@@ -55,6 +60,7 @@ class Prediction:
     stage: str | None = None
     tour: str | None = None
     score_age_s: float | None = None
+    prior_source: str | None = None
 
     @property
     def p_market(self) -> float | None:
@@ -77,23 +83,14 @@ def _logloss(p: float, y: int) -> float:
     return -(y * math.log(p) + (1 - y) * math.log(1 - p))
 
 
-def _weights(preds: Sequence[Prediction]) -> list[float]:
-    counts: dict[str, int] = defaultdict(int)
-    for p in preds:
-        counts[p.event] += 1
-    return [1.0 / counts[p.event] for p in preds]
-
-
 def _scores(preds: Sequence[Prediction]) -> dict[str, Any]:
-    """Event-weighted Brier/log loss for model and market on observations with both."""
+    """Brier/log loss for model and market on the observations that have both."""
     both = [p for p in preds if p.p_market is not None]
     if not both:
         return {"observations": len(preds), "events": len({p.event for p in preds})}
-    w = _weights(both)
-    total = sum(w)
 
     def mean(f: Callable[[Prediction], float]) -> float:
-        return sum(wi * f(p) for wi, p in zip(w, both, strict=True)) / total
+        return sum(f(p) for p in both) / len(both)
 
     brier_m = mean(lambda p: (p.p_model - p.outcome) ** 2)
     brier_k = mean(lambda p: ((p.p_market or 0) - p.outcome) ** 2)
@@ -116,19 +113,17 @@ def calibration_table(
     usable = [(p, q) for p, q in usable if q is not None]
     if not usable:
         return rows
-    w = _weights([p for p, _ in usable])
     for lo, hi in pairwise(PROB_BINS):
         idx = [i for i, (_, q) in enumerate(usable) if lo <= q < hi]  # type: ignore[operator]
         if not idx:
             continue
-        weight = sum(w[i] for i in idx)
         rows.append(
             {
                 "bin": f"{lo:.1f}-{min(hi, 1.0):.1f}",
                 "observations": len(idx),
                 "events": len({usable[i][0].event for i in idx}),
-                "mean_predicted": sum(w[i] * (usable[i][1] or 0) for i in idx) / weight,
-                "observed_frequency": sum(w[i] * usable[i][0].outcome for i in idx) / weight,
+                "mean_predicted": sum(usable[i][1] or 0 for i in idx) / len(idx),
+                "observed_frequency": sum(usable[i][0].outcome for i in idx) / len(idx),
             }
         )
     return rows
@@ -137,7 +132,8 @@ def calibration_table(
 def paired_brier_difference(
     preds: Sequence[Prediction], n_boot: int = 2000, seed: int = 5
 ) -> dict[str, Any] | None:
-    """Mean over events of (Brier_model - Brier_market); negative favours the model."""
+    """Mean over observations of (Brier_model - Brier_market), with a CI that resamples
+    whole events; negative favours the model."""
     per_event: dict[str, list[float]] = defaultdict(list)
     for p in preds:
         if p.p_market is None:
@@ -145,15 +141,28 @@ def paired_brier_difference(
         per_event[p.event].append((p.p_model - p.outcome) ** 2 - (p.p_market - p.outcome) ** 2)
     if len(per_event) < 2:
         return None
-    diffs = np.array([sum(v) / len(v) for v in per_event.values()])
-    rng = np.random.default_rng(seed)
-    boots = diffs[rng.integers(0, len(diffs), size=(n_boot, len(diffs)))].mean(axis=1)
+    mean, ci = cluster_mean_ci(list(per_event.values()), n_boot=n_boot, seed=seed)
     return {
-        "events": len(diffs),
-        "mean_difference": float(diffs.mean()),
-        "ci95": [float(np.quantile(boots, 0.025)), float(np.quantile(boots, 0.975))],
+        "events": len(per_event),
+        "mean_difference": mean,
+        "ci95": ci,
         "interpretation": "negative = model more accurate than the market mid",
     }
+
+
+def cluster_mean_ci(
+    groups: Sequence[Sequence[float]], n_boot: int = 2000, seed: int = 5
+) -> tuple[float, list[float]]:
+    """Mean of all values, and a 95% CI from resampling whole groups (events)."""
+    sums = np.array([sum(g) for g in groups], dtype=float)
+    counts = np.array([len(g) for g in groups], dtype=float)
+    rng = np.random.default_rng(seed)
+    idx = rng.integers(0, len(sums), size=(n_boot, len(sums)))
+    boots = sums[idx].sum(axis=1) / counts[idx].sum(axis=1)
+    return float(sums.sum() / counts.sum()), [
+        float(np.quantile(boots, 0.025)),
+        float(np.quantile(boots, 0.975)),
+    ]
 
 
 def executable_check(preds: Sequence[Prediction], min_edge: float = 0.0) -> dict[str, Any]:
@@ -189,7 +198,7 @@ def evaluate_predictions(preds: Sequence[Prediction]) -> dict[str, Any]:
             f"only {events} independent events; at least {MIN_EVENTS} are needed before any "
             "calibration or model-vs-market conclusion"
             if events < MIN_EVENTS
-            else "event-weighted statistics; CIs resample whole events"
+            else "every observation weighs the same; CIs resample whole events"
         ),
         "overall": _scores(preds),
         "calibration_model": calibration_table(preds, lambda p: p.p_model),
@@ -241,6 +250,7 @@ def predictions_from_db(db: Database, model: str = "tennis_markov") -> list[Pred
                 stage=r.stage,
                 tour=r.tour,
                 score_age_s=r.score_age_s,
+                prior_source=r.prior_source,
             )
         )
     return out

@@ -6,6 +6,7 @@ SYNTHETIC test data only; none of these numbers are market results.
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import replace
 from decimal import Decimal as D
 
@@ -301,7 +302,7 @@ def test_event_splits_never_leak_and_respect_time() -> None:
 
 
 # ----------------------------------------------------------- model eval
-def test_model_evaluation_is_event_weighted() -> None:
+def test_model_evaluation_weights_observations_and_resamples_events() -> None:
     preds = [
         # event A: model confident and right, market 0.5 - observed 3 times
         *[Prediction(float(i), "A", "A-1", 0.9, 1, 0.49, 0.51) for i in range(3)],
@@ -310,12 +311,70 @@ def test_model_evaluation_is_event_weighted() -> None:
     ]
     report = evaluate_predictions(preds)
     overall = report["overall"]
-    # Each event weighs 1: Brier_model = (0.01 + 0.81) / 2; market = 0.25.
-    assert overall["brier_model"] == pytest.approx(0.41)
+    # Every observation weighs 1: Brier_model = (3 * 0.01 + 0.81) / 4; market = 0.25.
+    assert overall["brier_model"] == pytest.approx(0.21)
     assert overall["brier_market"] == pytest.approx(0.25)
+    (cal,) = report["calibration_model"]
+    assert cal["observed_frequency"] == pytest.approx(0.75) and cal["events"] == 2
+    paired = report["paired_brier_vs_market"]
+    assert paired["mean_difference"] == pytest.approx((3 * (0.01 - 0.25) + 0.81 - 0.25) / 4)
+    assert paired["ci95"][0] <= paired["mean_difference"] <= paired["ci95"][1]
     assert not report["sufficient"] and "only 2 independent events" in report["note"]
     two_markets = [*preds, Prediction(0.0, "A", "A-2", 0.1, 0, 0.49, 0.51)]
     assert {p.market for p in one_market_per_event(two_markets)} == {"A-1", "B-1"}
+
+
+def race_predictions(target: int = 3) -> list[Prediction]:
+    """A race to `target` points on fair coin flips, observed before every point with the
+    exact probability that player A wins. Every path appears in proportion to its probability
+    (a path of n points 2**(2*target - 1 - n) times), so the data set *is* the expectation."""
+
+    def p_win(a: int, b: int) -> float:
+        need_a, need_b = target - a, target - b
+        return sum(math.comb(need_a - 1 + j, j) * 0.5 ** (need_a + j) for j in range(need_b))
+
+    paths: list[list[tuple[int, int]]] = []
+
+    def walk(a: int, b: int, seen: list[tuple[int, int]]) -> None:
+        if a == target or b == target:
+            paths.append([*seen, (a, b)])
+            return
+        walk(a + 1, b, [*seen, (a, b)])
+        walk(a, b + 1, [*seen, (a, b)])
+
+    walk(0, 0, [])
+    preds = []
+    for i, path in enumerate(paths):
+        won = int(path[-1][0] == target)
+        observed = path[:-1]
+        for copy in range(2 ** (2 * target - 1 - len(observed))):
+            event = f"R{i}-{copy}"
+            preds += [
+                Prediction(float(k), event, f"{event}-A", p_win(a, b), won, 0.49, 0.51)
+                for k, (a, b) in enumerate(observed)
+            ]
+    return preds
+
+
+def test_calibration_table_is_exact_for_a_calibrated_forecaster() -> None:
+    """Weighting each match 1/n (n = its observation count) would make this calibrated
+    forecaster look too timid, because n depends on how the match ends. Equal observation
+    weights reproduce the forecast exactly in every bin."""
+    preds = race_predictions()
+    rows = evaluate_predictions(preds)["calibration_model"]
+    assert len(rows) >= 4
+    for row in rows:
+        assert row["observed_frequency"] == pytest.approx(row["mean_predicted"]), row["bin"]
+    counts: dict[str, int] = {}
+    for p in preds:
+        counts[p.event] = counts.get(p.event, 0) + 1
+    underdog = [p for p in preds if 0.2 <= p.p_model < 0.4]
+    weights = [1 / counts[p.event] for p in underdog]
+    event_weighted = sum(w * p.outcome for w, p in zip(weights, underdog, strict=True)) / sum(
+        weights
+    )
+    predicted = sum(w * p.p_model for w, p in zip(weights, underdog, strict=True)) / sum(weights)
+    assert event_weighted < predicted - 0.01  # the bias the old weighting had
 
 
 # ------------------------------------------------------------ migration

@@ -337,6 +337,27 @@ def cmd_research(settings: Settings, args: argparse.Namespace) -> int:
     from kalshi_trader.database.db import Database
 
     db = Database(settings.db_path)
+    if args.kind == "calibrate":
+        from kalshi_trader.research.calibration import calibration_report
+        from kalshi_trader.research.model_eval import predictions_from_db
+
+        if args.source == "replay":
+            from kalshi_trader.backtesting.replay import replay
+
+            preds = replay(settings, db, strategies=[]).predictions
+        else:
+            preds = predictions_from_db(db)
+        report = calibration_report(
+            preds,
+            settings.strategies.tennis_model,
+            settings.fees,
+            test_fraction=args.test_fraction,
+            embargo_s=args.embargo_hours * 3600,
+        )
+        print(json.dumps(report, indent=1, default=str))
+        toml = (report.get("recommendation") or {}).get("toml")
+        print("\n" + (toml or "No calibration recommended: " + report["recommendation"]["reason"]))
+        return 0
     if args.kind == "model-eval":
         from kalshi_trader.research.model_eval import (
             evaluate_predictions,
@@ -581,13 +602,25 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--top", type=int, default=10)
     p.set_defaults(func=cmd_diagnostics)
 
-    p = sub.add_parser("research", help="model evaluation and sensitivity analysis")
-    p.add_argument("kind", choices=["model-eval", "sensitivity"])
+    p = sub.add_parser(
+        "research", help="model evaluation, probability calibration and sensitivity analysis"
+    )
+    p.add_argument("kind", choices=["model-eval", "calibrate", "sensitivity"])
     p.add_argument(
         "--source",
         choices=["live", "replay"],
-        default="replay",
-        help="model-eval: forward predictions recorded live, or a replay",
+        default=None,
+        help="forward predictions recorded live, or a replay of recorded observations "
+        "(default: replay for model-eval, live for calibrate)",
+    )
+    p.add_argument(
+        "--test-fraction", type=float, default=0.3, help="calibrate: held-out share of events"
+    )
+    p.add_argument(
+        "--embargo-hours",
+        type=float,
+        default=1.0,
+        help="calibrate: drop events first seen within this long after the split boundary",
     )
     p.set_defaults(func=cmd_research)
 

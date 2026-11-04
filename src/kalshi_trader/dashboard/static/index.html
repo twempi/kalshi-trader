@@ -110,8 +110,16 @@
       <div class="card">
         <h2>Tennis model vs market (forward data)</h2>
         <p class="caption">Model probabilities recorded live next to the executable market, scored once markets settle.
-          Benchmark = market-implied probability (YES mid). Each match counts once (event-weighted).</p>
+          Benchmark = market-implied probability (YES mid). Every observation counts the same; confidence intervals
+          resample whole matches.</p>
         <div id="research-model"></div>
+      </div>
+      <div class="card">
+        <h2>Probability calibration (tennis model)</h2>
+        <p class="caption">Recalibrations of the model fitted on earlier matches and scored on later, held-out matches,
+          restricted to what the strategy could trade. Lower log loss is better. The decision check buys one contract
+          at the first observation per held-out match that clears the entry rule and holds it to settlement.</p>
+        <div id="research-calibration"></div>
       </div>
       <div class="card">
         <h2>Market making - research simulation</h2>

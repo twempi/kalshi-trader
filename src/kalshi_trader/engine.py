@@ -42,7 +42,12 @@ from kalshi_trader.market_data.generic import GenericDiscovery
 from kalshi_trader.market_data.orderbook import OrderBook
 from kalshi_trader.market_data.prematch import pre_match_mid_from_candles
 from kalshi_trader.market_data.recorder import Recorder
-from kalshi_trader.models.estimator import ProbabilityEstimate, WinProbabilityEstimator
+from kalshi_trader.models.calibration import calibrate
+from kalshi_trader.models.estimator import (
+    PlayerProbability,
+    ProbabilityEstimate,
+    WinProbabilityEstimator,
+)
 from kalshi_trader.strategies import ScanContext, build_strategies
 from kalshi_trader.strategies.base import RelatedGroup
 from kalshi_trader.strategies.market_making import MarketMakingSimulator
@@ -683,6 +688,20 @@ class TradingEngine:
                     market.fee_multiplier,
                 )
 
+    def _traded_probability(
+        self, raw: PlayerProbability | None, mid: Decimal | None
+    ) -> PlayerProbability | None:
+        """The tennis_model strategy's view: its calibration applied to the raw model."""
+        cal = self.settings.strategies.tennis_model.calibration
+        if raw is None or cal.is_identity or (cal.market_weight and mid is None):
+            return raw
+        market = float(mid) if mid is not None else None
+        return PlayerProbability(
+            calibrate(raw.point, cal, market),
+            calibrate(raw.low, cal, market),
+            calibrate(raw.robust_low, cal, market),
+        )
+
     def _views_for(
         self, ctx: Any, best: dict[str, Opportunity], now: float
     ) -> list[dict[str, Any]]:
@@ -701,7 +720,8 @@ class TradingEngine:
             bid = book.best_bid("yes") if valid and book else None
             ask = book.best_ask("yes") if valid and book else None
             mid = book.mid("yes") if valid and book else None
-            prob = estimate.for_player(index) if estimate else None
+            raw = estimate.for_player(index) if estimate else None
+            prob = self._traded_probability(raw, mid)
             opp = best.get(market.ticker)
             views.append(
                 {
@@ -758,6 +778,8 @@ class TradingEngine:
                         "model_prob": prob.point if prob else None,
                         "model_prob_low": prob.low if prob else None,
                         "model_prob_robust": prob.robust_low if prob else None,
+                        "model_prob_raw": raw.point if raw else None,
+                        "model_calibrated": prob is not raw,
                         "model_std": estimate.p1_std if estimate else None,
                         "prior_source": estimate.prior.source if estimate else None,
                         "pre_match_prob": market.pre_match_prob,

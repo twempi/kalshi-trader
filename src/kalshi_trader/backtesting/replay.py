@@ -308,6 +308,7 @@ def replay(
                     stage=match_stage(state, late_games),
                     tour=match.tour_key,
                     score_age_s=info.age_s,
+                    prior_source=est.prior.source,
                 )
             )
 

@@ -207,6 +207,26 @@ class PriceThresholdStrategySettings(StrategySettingsBase):
 TennisStage = Literal["prematch", "early", "mid", "late"]
 
 
+class ProbabilityCalibrationSettings(BaseModel):
+    """Recalibration of the tennis model's win probability before it is traded on:
+
+        logit(p) = slope * logit(p_model) + market_weight * logit(p_market)
+
+    ``p_market`` is the live YES mid of the backed player's market. slope = 1 and
+    market_weight = 0 is the raw model. The form has no intercept, so the two players'
+    probabilities still sum to one. Values come from ``kalshi-trader research calibrate``
+    (or the dashboard's Research tab), fitted on settled forward predictions and checked on
+    later, held-out matches; do not set them by hand.
+    """
+
+    slope: float = Field(default=1.0, ge=0.0, le=5.0)
+    market_weight: float = Field(default=0.0, ge=0.0, le=2.0)
+
+    @property
+    def is_identity(self) -> bool:
+        return self.slope == 1.0 and self.market_weight == 0.0
+
+
 class TennisModelStrategySettings(StrategySettingsBase):
     """Strategy A/C: statistical mispricing with the tennis Markov model, any match stage.
 
@@ -229,6 +249,9 @@ class TennisModelStrategySettings(StrategySettingsBase):
     # flag nearly every underdog as cheap. Require the anchored prior by default.
     require_pre_match_prior: bool = True
     min_effective_sample_size: float = 50.0
+    calibration: ProbabilityCalibrationSettings = Field(
+        default_factory=ProbabilityCalibrationSettings
+    )
 
 
 class CrossMarketStrategySettings(StrategySettingsBase):

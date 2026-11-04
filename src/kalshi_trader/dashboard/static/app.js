@@ -166,7 +166,7 @@
       { label: "Spread", num: true, fmt: (m) => cents(m.spread) },
       { label: "Ask depth ≤3¢", num: true, fmt: (m) => compact(m.ask_depth_3c), title: (m) => (m.ask_depth_3c === null ? "" : `${Math.round(m.ask_depth_3c)} contracts within 3¢ of the best ask`) },
       { label: "Market prob", num: true, fmt: (m) => prob(m.market_prob) },
-      { label: "Model prob", num: true, fmt: (m) => prob(m.model_prob), title: (m) => m.prior_source ? `prior: ${m.prior_source}${m.pre_match_prob ? " (pre-match " + prob(m.pre_match_prob) + ")" : ""}` : "" },
+      { label: "Model prob", num: true, fmt: (m) => prob(m.model_prob) + (m.model_calibrated ? "*" : ""), title: (m) => [m.model_calibrated ? `calibrated; raw model ${prob(m.model_prob_raw)}` : "", m.prior_source ? `prior: ${m.prior_source}${m.pre_match_prob ? " (pre-match " + prob(m.pre_match_prob) + ")" : ""}` : ""].filter(Boolean).join(" · ") },
       { label: "Robust low", num: true, fmt: (m) => prob(m.model_prob_robust) },
       { label: "EV/contract", num: true, fmt: (m) => (m.ev_conservative === null ? "–" : (m.ev_conservative >= 0 ? "+" : "−") + Math.abs(m.ev_conservative * 100).toFixed(1) + "¢"), cls: (m) => (m.ev_conservative > 0 ? "pos" : "") },
       { label: "Opportunity", render: (m) => (m.opportunity_status ? pill(STATUS_KIND[m.opportunity_status] || "neutral", `${m.opportunity_strategy}: ${m.opportunity_status}`) : node("span", "muted", "–")), title: (m) => m.opportunity_reason || "" },
@@ -382,6 +382,40 @@
   }
 
   // ------------------------------------------------------------ research
+  const diffCI = (d) => (d ? `${num(d.mean_logloss_difference, 4)} [${num(d.ci95[0], 4)}, ${num(d.ci95[1], 4)}]` : "–");
+  async function renderCalibration() {
+    const c = await api("/api/research/calibration");
+    const box = $("research-calibration");
+    const rec = c.recommendation || {};
+    box.replaceChildren(node("p", "muted small", `${c.events || 0} matches · ${c.observations || 0} observations · fitted on ${(c.train || {}).events || 0} earlier matches, scored on ${(c.test || {}).events || 0} later ones · configured now: slope ${num((c.configured || {}).slope, 3)}, market weight ${num((c.configured || {}).market_weight, 3)}`));
+    if (!c.sufficient) { box.appendChild(node("div", "empty", rec.reason || "Not enough settled matches yet.")); return; }
+    const cands = Object.entries(c.candidates || {}).map(([k, v]) => Object.assign({ k }, v));
+    if (c.market_mid) cands.push({ k: "market mid (benchmark)", test: c.market_mid.test });
+    table(box.appendChild(node("div", "table-wrap")), [
+      { label: "Candidate", key: "k" },
+      { label: "Slope", num: true, fmt: (x) => (x.params ? num(x.params.slope, 3) : "–") },
+      { label: "Market weight", num: true, fmt: (x) => (x.params ? num(x.params.market_weight, 3) : "–") },
+      { label: "Held-out log loss", num: true, fmt: (x) => num(x.test.logloss, 4) },
+      { label: "Brier", num: true, fmt: (x) => num(x.test.brier, 4) },
+      { label: "vs raw model (Δ log loss, 95% CI)", num: true, fmt: (x) => diffCI(x.vs_raw_model) },
+      { label: "vs market mid", num: true, fmt: (x) => diffCI(x.vs_market_mid) },
+    ], cands);
+    const adds = c.model_adds_information;
+    if (adds) box.appendChild(node("p", adds.ci95[1] < 0 ? "pos" : "neg", `Model + market vs market alone: ${diffCI(adds)} - ${adds.verdict}.`));
+    const dc = c.decision_check || {};
+    const checks = Object.entries(dc).filter(([k]) => k !== "note").map(([k, v]) => Object.assign({ k }, v));
+    table(box.appendChild(node("div", "table-wrap")), [
+      { label: "Decision check", key: "k" }, { label: "Entries", num: true, key: "entries" },
+      { label: "Win rate", num: true, fmt: (x) => pct(x.win_rate) }, { label: "Avg price", num: true, fmt: (x) => cents(x.avg_price) },
+      { label: "P&L / contract after fees", num: true, cls: (x) => signClass(x.pnl_per_contract_after_fees),
+        fmt: (x) => (x.entries ? `${cents(x.pnl_per_contract_after_fees)} [${cents(x.ci95[0])}, ${cents(x.ci95[1])}]` : "–") },
+      { label: "ROI on cost", num: true, cls: (x) => signClass(x.roi_on_cost), fmt: (x) => pct(x.roi_on_cost) },
+    ], checks);
+    box.appendChild(node("p", rec.candidate ? "" : "muted", rec.candidate ? `Recommended: ${rec.candidate}. ${rec.reason}.` : `No recalibration recommended: ${rec.reason}.`));
+    if (rec.warning) box.appendChild(node("p", "neg", "Warning: " + rec.warning + "."));
+    if (rec.toml) box.appendChild(node("pre", "json", rec.toml));
+  }
+
   async function renderResearch() {
     await refreshHeader();
     const r = await api("/api/research");
@@ -398,6 +432,7 @@
       { label: "Stage", key: "k" }, { label: "Events", num: true, key: "events" },
       { label: "Brier model", num: true, fmt: (x) => num(x.brier_model, 4) }, { label: "Brier market", num: true, fmt: (x) => num(x.brier_market, 4) },
     ], stages, { empty: "No settled predictions yet." });
+    renderCalibration().catch((e) => $("research-calibration").replaceChildren(node("p", "neg", String(e))));
     const mm = r.market_making || {};
     const s = mm.summary;
     const mbox = $("research-mm");
