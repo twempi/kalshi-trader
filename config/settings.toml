@@ -67,7 +67,7 @@ entry_cooldown_s = 30.0
 mode = "paper"
 stages = ["early", "mid", "late"]   # "prematch" is always reported unsupported (no independent prior)
 tours = []                           # empty = all; e.g. ["ATP", "WTA"]
-min_price = 0.05
+min_price = 0.20                    # below 20¢ the model overrates underdogs and fees+spread exceed ~10% of the price
 max_price = 0.95
 min_edge = 0.03                     # $/contract after fees, at the final fill, conservative probability
 max_spread = 0.04
@@ -138,7 +138,7 @@ max_mid_move_since_score_change = 0.10
 max_trades_per_market = 1
 max_trades_per_event = 1
 kelly_fraction = 0.10
-unvalidated_size_multiplier = 0.25   # strategies without validated forward evidence
+unvalidated_size_multiplier = 1.0    # strategies without validated evidence; 1.0 = main sized like the shadow ledgers, 0.25 = cautious
 max_consecutive_errors = 5
 
 [evidence]                       # what a strategy must show (forward, out-of-sample) to be "validated"

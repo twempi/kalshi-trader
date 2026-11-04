@@ -170,7 +170,9 @@ Every proposal passes, in order (`core/pipeline.py`):
    per-strategy (15%) and correlation-group (8%; same tournament or series) caps. Exposure is
    always measured as **maximum possible loss**, not win probability.
 5. **Execution evaluator** (`core/evaluator.py`): finds the largest whole-contract order that fits
-   the budget (× 0.25 for strategies without validated evidence), fits 10% fractional Kelly on
+   the budget (× `risk.unvalidated_size_multiplier` for strategies without validated evidence:
+   1.0 in the shipped config, so the main account sizes like the shadow ledgers; 0.25 is the
+   cautious setting), fits 10% fractional Kelly on
    the conservative probability at the *actual* average cost, is fillable from displayed depth
    (× 50% liquidity haircut) within the limit price, and still clears `min_edge` **after** the
    walked average price and the exact Kalshi fee for that order size:
@@ -596,7 +598,7 @@ Each strategy's status (`kalshi-trader strategies`, Strategies tab):
 | `experimental` | New, or its rules changed (version or config hash); no evidence |
 | `collecting_data` | Observe mode, accumulating forward shadow-ledger results |
 | `ready_for_paper` | Forward evidence meets every requirement; an operator *may* set `mode = "paper"` (never automatic) |
-| `paper_trading` | `mode = "paper"`; sized at `risk.unvalidated_size_multiplier` (25%) until validated |
+| `paper_trading` | `mode = "paper"`; sized at `risk.unvalidated_size_multiplier` (1.0 in the shipped config, 0.25 cautious) until validated |
 | `paused` | Paused by an operator (persists) |
 | `rejected` | Forward evidence significantly negative; main-account entries blocked until the rules change |
 
@@ -739,7 +741,29 @@ None is required. Scraping sites in breach of their terms is deliberately not do
 
 ## Results to date
 
-**Paper trading (main account and shadow ledgers):** no simulated trades yet. In a 2.5-minute
+**Forward paper trading on the server (trades settled 2026-11-02 10:23 → 2026-11-04 03:15 UTC, ~41 h):**
+
+| Ledger | Trades | P&L | Notes |
+| --- | ---: | ---: | --- |
+| `tennis_model`, main account (× 0.25 size) | 57 | +$12.32 | ~$1.90 per trade; 25 wins where the market mid implied 19.1 |
+| `tennis_model`, shadow ledger (full size) | 57 | +$75.11 | 16% return on capital deployed; calibration-null p = 0.14 (not significant) |
+| `cross_market`, main | 2 baskets | +$0.02 | two tennis-pair baskets, +1¢ each after fees |
+| `late_match`, shadow | 5 | −$10.81 | 4 small wins and one −$19.24 loss (average entry 89¢) |
+
+- Contracts bought under 20¢ (21 of the 57) lost 18% of their cost; trades at 20¢ or more made
+  money. Across 557 settled matches the model overrated 10–30% underdogs by 3–5 points.
+  This is why `tennis_model.min_price` is now 0.20.
+- Model vs market over 557 settled matches (forward predictions): Brier 0.1201 (model) vs
+  0.1179 (market mid). Paired difference +0.0022, 95% CI [+0.0001, +0.0043], so the market is
+  still slightly more accurate on average.
+- Fees plus half the spread cost 1.85¢ per contract on these trades, 8% of the average price.
+  At about 33 trades a day that hurdle dominates: with no real edge, shadow-size trading loses
+  about $14 a day on $1,000.
+
+The main account's size multiplier is now 1.0 (it was 0.25), so the main account trades at
+shadow-ledger size: about $8 per trade on $1,000, at most 2% of equity.
+
+**Paper trading, first live check:** in a 2.5-minute
 live verification run on 2026-11-02 (3 matches in progress), every opportunity was evaluated
 and none cleared its requirements: the tennis model's best conservative edge stayed below 3¢
 after fees, tennis pairs never crossed after fees, and the late-match baseline's leader
