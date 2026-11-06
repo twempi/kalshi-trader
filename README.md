@@ -176,14 +176,15 @@ Every proposal passes, in order (`core/pipeline.py`):
    trade-count limits per market/event, not already exposed to the event.
 3. **Portfolio checks**: emergency stop, operator pause, max open positions, daily loss, drawdown.
 4. **Risk budget**: the maximum *loss* this trade may add = the smallest of per-trade cap
-   (2% of equity, ≤ $25), cash, and the remaining headroom of the aggregate (30%), per-event (3%),
+   (2% of equity, so it grows with the account; an optional fixed dollar ceiling,
+   `risk.max_position_cost`, is unset in the shipped config), cash, and the remaining headroom of the aggregate (30%), per-event (3%),
    per-strategy (15%) and correlation-group (8%; same tournament or series) caps. Exposure is
    always measured as **maximum possible loss**, not win probability.
 5. **Execution evaluator** (`core/evaluator.py`): finds the largest whole-contract order that fits
    the budget (× `risk.unvalidated_size_multiplier` for strategies without validated evidence:
    1.0 in the shipped config, so the main account sizes like the shadow ledgers; 0.25 is the
-   cautious setting), fits 10% fractional Kelly on
-   the conservative probability at the *actual* average cost, is fillable from displayed depth
+   cautious setting), fits fractional Kelly (`risk.kelly_fraction`, 0.20 in the shipped config)
+   on the conservative probability at the *actual* average cost, is fillable from displayed depth
    (× 50% liquidity haircut) within the limit price, and still clears `min_edge` **after** the
    walked average price and the exact Kalshi fee for that order size:
 
@@ -836,6 +837,34 @@ None is required. Scraping sites in breach of their terms is deliberately not do
 
 The main account's size multiplier is now 1.0 (it was 0.25), so the main account trades at
 shadow-ledger size: about $8 per trade on $1,000, at most 2% of equity.
+
+**Update 2026-11-06 (127 main-account trades since 2026-11-02):** main account $1,000 → $1,089
+(+8.9%, max drawdown 0.7%). `tennis_model` shadow ledger: 120 trades, +$221, max drawdown 3.9%.
+The current rules (`1+6b183f35`) have 30 of the 50 trades needed and are still unvalidated
+(calibration-null p = 0.09; bootstrap CI of mean P&L includes zero).
+
+- **The edge is in ITF matches.** Of the 92 shadow trades at 20¢ or more, 83 were ITF (+$234);
+  the 9 Challenger/ATP/WTA trades lost $31. Those trades won 56 times, where the market mid implied
+  43 and the model 60, so the model looks informative but overstates its edge. Per contract it
+  predicted 17.3¢, and 10.3¢ was realised. Fees plus the ask's premium over the mid cost about
+  2.1¢ per contract.
+- **Calibration fit** (`/api/research/calibration`, 128k observations over 1,239 matches): no
+  recalibration is recommended. The model improves on the market mid's log loss by 0.004, with a
+  CI [−0.009, +0.001] that includes zero. By stage it beats the mid early (−0.005) and mid-match
+  (−0.008) but hardly late (−0.001), and the 15 late-stage trades broke even.
+- **Sizing.** Every trade under the current rules was sized by Kelly; the 2% per-trade cap never
+  bound. Trades with a bigger estimated edge did *not* earn more: in terciles of the Kelly
+  fraction, wins exceeded the market's expectation by +5.7, +3.5 and +3.5, and the least
+  confident third had the best return. `risk.kelly_fraction` therefore went from 0.10 to 0.20,
+  scaling all bets evenly, and the fixed $25 per-trade ceiling was removed so the cap stays
+  2% of equity as the account grows. Replaying the 120 shadow trades at 0.20 gives +$397 instead
+  of +$221 with a 9.3% drawdown instead of 3.9%; with no edge, fees would cost about $17 a day
+  instead of $9. 0.25 reached an 11.7% drawdown, too close to the 15% emergency stop. Go back to
+  0.10 if drawdown nears 10%.
+- **Open questions being tested:** whether the paper fills survive a real order's delay
+  ([Fill delay](#5-fill-delay)), and three observe-only variants (`itf_only`, `no_late`,
+  `edge_exit`, see [Strategies](#strategies-and-operating-modes)). Compare them after about
+  300 trades.
 
 **Paper trading, first live check:** in a 2.5-minute
 live verification run on 2026-11-02 (3 matches in progress), every opportunity was evaluated
