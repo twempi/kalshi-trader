@@ -103,8 +103,10 @@ def outcome_from_row(t: PaperTradeRow) -> TradeOutcome:
 
 
 def _modes(settings: Settings) -> dict[str, str]:
+    """Every strategy name (including tennis_model variants) -> its configured mode."""
     cfg = settings.strategies
-    return {name: getattr(cfg, name).mode for name in STRATEGY_NAMES}
+    modes = {name: getattr(cfg, name).mode for name in STRATEGY_NAMES}
+    return modes | {name: v.mode for name, v in cfg.tennis_variants().items()}
 
 
 def create_app(settings: Settings, db: Database | None = None) -> FastAPI:
@@ -153,7 +155,7 @@ def create_app(settings: Settings, db: Database | None = None) -> FastAPI:
         """``main`` (the default) or a strategy name, for that strategy's shadow ledger."""
         if not ledger or ledger == "main":
             return MAIN_ACCOUNT_ID
-        account = accounts().get(f"shadow:{ledger}") if ledger in STRATEGY_NAMES else None
+        account = accounts().get(f"shadow:{ledger}") if ledger in _modes(settings) else None
         if account is None:
             raise HTTPException(404, "unknown ledger: use main or a strategy name")
         return account.id
@@ -409,7 +411,7 @@ def create_app(settings: Settings, db: Database | None = None) -> FastAPI:
         main_closed = outcomes_from_trades(closed_trades())
         main_open = open_trades()
         out = []
-        for name in STRATEGY_NAMES:
+        for name in modes:
             row = states.get(name)
             shadow = accts.get(f"shadow:{name}")
             shadow_outcomes = (
@@ -499,7 +501,8 @@ def create_app(settings: Settings, db: Database | None = None) -> FastAPI:
                 "per_strategy": float(risk.max_strategy_exposure_fraction) * equity,
                 "per_correlation_group": float(risk.max_correlated_exposure_fraction) * equity,
                 "per_trade": min(
-                    float(risk.max_fraction_per_trade) * equity, float(risk.max_position_cost)
+                    float(risk.max_fraction_per_trade) * equity,
+                    float(risk.max_position_cost or "inf"),
                 ),
                 "max_open_positions": risk.max_open_positions,
             },
@@ -567,6 +570,19 @@ def create_app(settings: Settings, db: Database | None = None) -> FastAPI:
         report["computed_ts"] = time.time()
         calibration_cache["report"] = (time.time(), report)
         return report
+
+    @app.get("/api/research/fill-delay")
+    def research_fill_delay(ledger: str | None = None) -> dict[str, Any]:
+        """A ledger's paper trades re-priced on the recorded book 0-5 s later."""
+        from kalshi_trader.research.fill_delay import fill_delay_report
+
+        report = fill_delay_report(
+            database,
+            ledger_account_id(ledger),
+            settings.fees.taker_rate,
+            settings.paper.displayed_liquidity_fraction,
+        )
+        return {"label": DATA_LABEL, "ledger": ledger or "main", **report}
 
     @app.get("/api/analytics")
     def analytics() -> dict[str, Any]:

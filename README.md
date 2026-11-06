@@ -149,6 +149,15 @@ Change modes in `config/settings.toml` or from the environment, e.g.
 tag (`version+confighash`), which resets its evidence status: results earned under different
 rules never count. Operators can also pause/resume a single strategy at runtime (persisted):
 
+**Variants** test changes to `tennis_model` side by side without resetting its evidence.
+Each `[strategies.tennis_model_variants.<name>]` table overrides a few `tennis_model`
+settings; the copy runs as strategy `tennis_model_<name>`, always in `observe` mode, with its
+own shadow ledger (`/api/trades?ledger=tennis_model_<name>`). The shipped config runs
+`itf_only` (ITF tours only), `no_late` (no late-stage entries) and `edge_exit`
+(`exit_edge = 0.03`: sell once the bid after the taker fee beats the model's point probability
+by 3¢, never on a stale or suspect score). Promote a winner by copying its settings into
+`[strategies.tennis_model]`.
+
 ```bash
 uv run kalshi-trader strategies                      # modes, statuses, evidence
 uv run kalshi-trader strategies pause tennis_model   # stop main-account entries for one strategy
@@ -638,6 +647,16 @@ inside the price band) and holds it to settlement, for the raw model and each ca
 A candidate is recommended only if it beats the raw model on held-out log loss with a CI that
 excludes zero. Its parameters are then refitted on all matches and printed as a
 `[strategies.tennis_model.calibration]` block to paste into `config/settings.toml`.
+
+### 5. Fill delay
+
+`/api/research/fill-delay?ledger=<main|strategy>` re-prices every settled paper trade of a
+ledger on the recorded order book 0, 1, 2 and 5 seconds after the trade (same contracts, limit
+price, liquidity haircut and fees). A real order arrives a moment after the decision; if the
+ask has moved past the limit by then, the trade is missed. Delay 0 should reproduce the
+recorded P&L and checks the reconstruction. `pnl_retained` is the share of the paper profit
+that survives the delay; `missed_trades_actual_pnl` shows whether the trades that vanish
+were the winners.
 
 ## Strategy evaluation and selection
 

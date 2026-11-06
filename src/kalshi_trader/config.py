@@ -11,6 +11,7 @@ only ever read from the environment or ``.env``, never from the TOML file.
 from __future__ import annotations
 
 import os
+import re
 from decimal import Decimal
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -252,6 +253,9 @@ class TennisModelStrategySettings(StrategySettingsBase):
     calibration: ProbabilityCalibrationSettings = Field(
         default_factory=ProbabilityCalibrationSettings
     )
+    # None = hold to settlement. Otherwise sell into the bid once the bid after the taker fee
+    # exceeds the model's point probability for the held side by at least this much.
+    exit_edge: Money | None = None
 
 
 class CrossMarketStrategySettings(StrategySettingsBase):
@@ -310,16 +314,38 @@ class StrategiesSettings(BaseModel):
     market_making: MarketMakingStrategySettings = Field(
         default_factory=MarketMakingStrategySettings
     )
+    # Observe-only copies of tennis_model with some settings overridden, keyed by a short
+    # name; each runs as strategy ``tennis_model_<key>`` with its own shadow ledger.
+    tennis_model_variants: dict[str, dict[str, Any]] = Field(default_factory=dict)
     evaluation_interval_s: float = 1.0
     # Every strategy that is not "off" also trades a standalone shadow ledger so all
     # strategies can be compared on identical observations with identical risk rules.
     shadow_ledgers: bool = True
     entry_cooldown_s: float = 30.0
 
+    @model_validator(mode="after")
+    def _check_variants(self) -> StrategiesSettings:
+        for key in self.tennis_model_variants:
+            if not re.fullmatch(r"[a-z0-9_]{1,40}", key):
+                raise ValueError(f"tennis_model variant name {key!r}: use a-z, 0-9 and _")
+        self.tennis_variants()  # surfaces bad override values at load time
+        return self
+
+    def tennis_variants(self) -> dict[str, TennisModelStrategySettings]:
+        """``tennis_model_<key>`` -> tennis_model's settings with the overrides applied.
+        Variants never get main-account capital: their mode is always ``observe``."""
+        base = self.tennis_model.model_dump()
+        return {
+            f"tennis_model_{key}": TennisModelStrategySettings.model_validate(
+                {**base, **overrides, "mode": "observe"}
+            )
+            for key, overrides in self.tennis_model_variants.items()
+        }
+
 
 class RiskSettings(BaseModel):
     max_fraction_per_trade: Money = Decimal("0.02")  # max loss of one trade / equity
-    max_position_cost: Money = Decimal("25")
+    max_position_cost: Money | None = None  # optional fixed $ ceiling; None = % of equity only
     # Daily loss / drawdown limits stop NEW entries. They are not a loss ceiling: positions
     # already open can still lose their full cost.
     max_daily_loss: Money = Decimal("50")

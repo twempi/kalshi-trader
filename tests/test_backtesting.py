@@ -286,3 +286,42 @@ def test_replay_runs_strategy_without_look_ahead(tmp_path, settings: Settings) -
     assert t.opened_ts == 105.0 and t.pnl > 0
     assert t.closed_ts == 500.0  # settled when the result became known, not at the end
     assert len(result.shadow_outcomes["late_match"]) == 1
+
+
+def test_fill_delay_reprices_on_the_later_recorded_book(settings: Settings) -> None:
+    """SYNTHETIC: the ask moves above the limit 1.5 s after the paper fill."""
+    from kalshi_trader.execution.paper import OrderIntent, PaperBroker
+    from kalshi_trader.market_data.orderbook import OrderBook
+    from kalshi_trader.research.fill_delay import fill_delay_report
+
+    db = Database(":memory:")
+    broker = PaperBroker(db, settings.paper, settings.fees, clock=lambda: 1000.0)
+    depth = {0.0: "0.60", 1.5: "0.55"}  # NO bid -> YES ask 0.40, then 0.45
+    with db.session() as s:
+        for dt, no_bid in depth.items():
+            s.add(
+                MarketSnapshotRow(
+                    ticker="M",
+                    received_ts=999.0 + dt if dt == 0.0 else 1000.0 + dt,
+                    source="ws",
+                    depth_json=json.dumps(
+                        {"yes_bids": [["0.38", "100"]], "no_bids": [[no_bid, "100"]]}
+                    ),
+                )
+            )
+    book = OrderBook("M")
+    book.apply_snapshot([(D("0.38"), D("100"))], [(D("0.60"), D("100"))], source="ws")
+    intent = OrderIntent("o1", "s", "M", "EV", "yes", D("0.41"), D("20"), D("100"))
+    assert broker.execute_buy(intent, book).status == "filled"
+    broker.settle_market("M", "yes", D("1"), ts=2000.0)
+    report = fill_delay_report(
+        db,
+        broker.account_id,
+        settings.fees.taker_rate,
+        settings.paper.displayed_liquidity_fraction,
+        delays=(0.0, 2.0),
+    )
+    now, later = report["summary"]["0.0"], report["summary"]["2.0"]
+    assert now["full_fills"] == 1 and now["pnl_delayed"] == now["pnl_actual"] > 0
+    assert later["missed"] == 1 and later["pnl_delayed"] == 0
+    assert later["missed_trades_actual_pnl"] == now["pnl_actual"]

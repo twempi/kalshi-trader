@@ -107,6 +107,49 @@ def test_tennis_model_marks_prematch_unsupported_when_enabled() -> None:
     assert note.status == DecisionStatus.UNSUPPORTED and "pre-match" in note.reasons[0]
 
 
+def test_tennis_model_exits_only_when_the_bid_beats_the_model() -> None:
+    ctx = make_context()  # model p(A) = 0.995; YES bid on A's market and NO bid on B's = 0.90
+    a, b = ctx.books["MKT-A"], ctx.books["MKT-B"]
+    strat = TennisModelStrategy(TennisModelStrategySettings(exit_edge=D("0.03")), FEES)
+    assert strat.exit_limit(ctx, "MKT-A", "yes", a, D("1")) is None
+    ctx.estimate = replace(ctx.estimate, p1_point=0.80)  # 0.90 - fee >= 0.80 + 0.03
+    limit, reason = strat.exit_limit(ctx, "MKT-A", "yes", a, D("1"))
+    assert limit == D("0.90") and "edge flipped" in reason
+    assert strat.exit_limit(ctx, "MKT-B", "no", b, D("1"))[0] == D("0.90")  # NO on B backs A
+    hold = TennisModelStrategy(TennisModelStrategySettings(), FEES)  # default: hold
+    assert hold.exit_limit(ctx, "MKT-A", "yes", a, D("1")) is None
+
+
+def test_exit_rule_sells_the_shadow_position_only_on_a_fresh_score(settings: Settings) -> None:
+    from kalshi_trader.core.pipeline import TradingCore
+    from kalshi_trader.database.repository import Repository
+    from kalshi_trader.execution.paper import OrderIntent
+    from kalshi_trader.strategies.base import ScoreInfo
+
+    strat = TennisModelStrategy(
+        TennisModelStrategySettings(mode="observe", exit_edge=D("0.03")), FEES, name="tm_exit"
+    )
+    db = Database(":memory:")
+    core = TradingCore(settings, db, Repository(db), [strat], clock=lambda: 1001.0)
+    ctx = make_context()
+    shadow = core.shadows["tm_exit"]
+    intent = OrderIntent("t1", "tm_exit", "MKT-A", "EV-1", "yes", D("0.95"), D("10"), D("100"))
+    bought = shadow.execute_buy(intent, ctx.books["MKT-A"])
+    ctx.estimate = replace(ctx.estimate, p1_point=0.80)
+    scan = ScanContext(now=1001.0, markets=ctx.markets, books=ctx.books, matches=[ctx])
+    core.run_cycle(scan)  # score age unknown: the market may know more than the feed
+    assert [t.id for t in shadow.open_trades()] == [bought.trade_id]
+    ctx.score_info = ScoreInfo(age_s=5.0, unchanged_s=5.0, mid_move=D("0.01"))
+    core.run_cycle(scan)
+    (trade,) = shadow.all_trades()
+    assert trade.status == "closed" and trade.exit_contracts == trade.entry_contracts
+    assert (
+        trade.realized_pnl
+        == trade.exit_proceeds - trade.exit_fee - trade.entry_cost - trade.entry_fee
+    )
+    assert core.broker.open_trades() == []  # observe mode: main account untouched
+
+
 # ------------------------------------------------------------ cross market
 def gm(ticker: str, strike: str | None, floor=None, cap=None, competitor=None) -> TrackedMarket:
     return TrackedMarket(

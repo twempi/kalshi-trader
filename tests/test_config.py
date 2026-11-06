@@ -73,3 +73,29 @@ def test_logging_redacts_sensitive_keys() -> None:
     )
     assert event["KALSHI-ACCESS-SIGNATURE"] == "***REDACTED***"
     assert event["headers"] == {"api_key": "***REDACTED***", "ok": 1}
+
+
+def test_tennis_model_variants_are_observe_only_copies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from kalshi_trader.strategies import build_strategies
+
+    cfg = tmp_path / "variants.toml"
+    cfg.write_text(
+        "[strategies.tennis_model]\nmin_edge = 0.05\n"
+        '[strategies.tennis_model_variants.itf]\ntours = ["ITF_MEN"]\nmode = "paper"\n'
+    )
+    monkeypatch.setenv("KT_CONFIG_PATH", str(cfg))
+    s = Settings(_env_file=None)
+    ((name, variant),) = s.strategies.tennis_variants().items()
+    assert name == "tennis_model_itf" and variant.mode == "observe"  # never main capital
+    assert variant.tours == ["ITF_MEN"] and variant.min_edge == Decimal("0.05")  # inherits
+    built = {st.name: st for st in build_strategies(s)}
+    assert built["tennis_model_itf"].version_tag != built["tennis_model"].version_tag
+    for bad in (
+        '[strategies.tennis_model_variants."Bad Name"]\n',
+        '[strategies.tennis_model_variants.x]\nstages = ["overtime"]\n',
+    ):
+        cfg.write_text(bad)
+        with pytest.raises(ValueError):
+            Settings(_env_file=None)

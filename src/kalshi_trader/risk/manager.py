@@ -258,7 +258,6 @@ class RiskManager:
         equity = max(ZERO, account.equity)
         caps: list[tuple[str, Decimal]] = [
             ("per-trade fraction", equity * s.max_fraction_per_trade),
-            ("per-trade cap", s.max_position_cost),
             ("cash", account.cash),
             (
                 "aggregate exposure",
@@ -273,6 +272,8 @@ class RiskManager:
                 equity * s.max_strategy_exposure_fraction - account.exposure(strategy=opp.strategy),
             ),
         ]
+        if s.max_position_cost is not None:
+            caps.append(("per-trade cap", s.max_position_cost))
         if opp.correlation_group:
             caps.append(
                 (

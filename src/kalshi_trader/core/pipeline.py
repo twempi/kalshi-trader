@@ -154,6 +154,7 @@ class TradingCore:
         info = {m.match.event_ticker: m.score_info for m in ctx.matches}
         candidates = [o for o in opps if o.status == DecisionStatus.CANDIDATE]
         if not self.record_only:
+            self._exits(ctx)
             for name, shadow in self.shadows.items():
                 mine = [copy.deepcopy(o) for o in candidates if o.strategy == name]
                 if mine:
@@ -176,6 +177,66 @@ class TradingCore:
         self.diagnostics.record(opps, ctx.now, {s.name: s.mode for s in self.strategies})
         self.opportunities = opps
         return opps
+
+    def _exits(self, ctx: ScanContext) -> None:
+        """Sell open positions that their strategy's exit rule flags (main + shadow ledger).
+        A stale or suspect score never triggers a sale: a market that moved on a point the
+        feed has not delivered yet would otherwise look overpriced."""
+        r = self.settings.risk
+        matches = {m.match.event_ticker: m for m in ctx.matches}
+        for strategy in self.strategies:
+            if getattr(strategy.settings, "exit_edge", None) is None:
+                continue
+            brokers = [self.shadows.get(strategy.name)]
+            if strategy.mode == "paper":
+                brokers.append(self.broker)
+            for broker in (b for b in brokers if b is not None):
+                for trade in broker.open_trades():
+                    match = matches.get(trade.event_ticker or "")
+                    book = ctx.books.get(trade.market_ticker)
+                    market = ctx.markets.get(trade.market_ticker)
+                    if trade.strategy != strategy.name or match is None or book is None:
+                        continue
+                    info = match.score_info
+                    if (
+                        market is None
+                        or not market.tradable
+                        or info.issue
+                        or info.age_s is None
+                        or info.age_s > r.max_score_data_age_s
+                        or (
+                            info.mid_move is not None
+                            and info.mid_move > r.max_mid_move_since_score_change
+                        )
+                        or (book.age_s(ctx.now) or 0.0) > r.max_market_data_age_s
+                    ):
+                        continue
+                    found = strategy.exit_limit(
+                        match,
+                        trade.market_ticker,
+                        trade.side,  # type: ignore[arg-type]
+                        book,
+                        market.fee_multiplier,
+                    )
+                    if found is None:
+                        continue
+                    limit, reason = found
+                    report = broker.execute_sell(
+                        trade.id,
+                        book,
+                        limit,
+                        _client_id(broker.account_id, "exit", trade.id, int(ctx.now // 30)),
+                        market.fee_multiplier,
+                    )
+                    if report.fill is not None and report.fill.filled > 0:
+                        log.info(
+                            "paper_exit",
+                            account=broker.account_name,
+                            strategy=strategy.name,
+                            market=trade.market_ticker,
+                            sold=str(report.fill.filled),
+                            reason=reason,
+                        )
 
     # ---------------------------------------------------------- allocation
     def _conditions(

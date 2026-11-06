@@ -94,6 +94,11 @@ def test_clean_opportunity_passes_with_per_trade_budget(risk: RiskManager) -> No
     budget = risk.budget(opp(), account())
     # 2% of $1000 equity = $20 is the tightest cap (event cap is 3% = $30)
     assert budget.max_loss == D("20") and budget.binding == "per-trade fraction"
+    # the per-trade limit scales with equity unless a fixed dollar ceiling is configured
+    assert risk.budget(opp(), account(equity=D("2000"), peak_equity=D("2000"))).max_loss == D("40")
+    risk.settings.max_position_cost = D("25")
+    capped = risk.budget(opp(), account(equity=D("2000"), peak_equity=D("2000")))
+    assert capped.max_loss == D("25") and capped.binding == "per-trade cap"
 
 
 @pytest.mark.parametrize(

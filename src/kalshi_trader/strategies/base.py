@@ -127,7 +127,9 @@ class Strategy:
 
     @property
     def config_hash(self) -> str:
-        raw = json.dumps(self.settings.model_dump(mode="json"), sort_keys=True, default=str)
+        # exclude_none: adding an optional setting, left unset, must not reset the evidence
+        settings = self.settings.model_dump(mode="json", exclude_none=True)
+        raw = json.dumps(settings, sort_keys=True, default=str)
         return hashlib.blake2b(raw.encode(), digest_size=8).hexdigest()
 
     @property
@@ -143,6 +145,12 @@ class Strategy:
 
     def evaluate_match(self, ctx: MatchContext) -> list[Opportunity]:
         return []
+
+    def exit_limit(
+        self, ctx: MatchContext, ticker: str, side: Side, book: OrderBook, fee_multiplier: Decimal
+    ) -> tuple[Decimal, str] | None:
+        """(limit price, reason) to sell an open position now, or None to keep holding."""
+        return None
 
     # --------------------------------------------------------------- helpers
     def directional(

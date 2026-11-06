@@ -255,6 +255,7 @@ def _strategy_modes(settings: Settings) -> dict[str, str]:
         "late_match": cfg.late_match.mode,
         "price_threshold": cfg.price_threshold.mode,
         "market_making": cfg.market_making.mode,
+        **{name: v.mode for name, v in cfg.tennis_variants().items()},
     }
 
 

@@ -80,6 +80,19 @@ min_effective_sample_size = 50
 slope = 1.0                         # 1.0 / 0.0 = the raw model. Fit with `research calibrate` or the
 market_weight = 0.0                 # dashboard's Research tab; changing these resets the evidence
 
+# Variants: observe-only copies of tennis_model with a few settings changed. Each runs as
+# strategy tennis_model_<name> with its own shadow ledger on the same matches, so ideas are
+# compared side by side without touching the main account or tennis_model's evidence.
+# Promote a winner by copying its settings into [strategies.tennis_model].
+[strategies.tennis_model_variants.itf_only]   # all profit so far came from ITF matches
+tours = ["ITF_MEN", "ITF_WOMEN"]
+
+[strategies.tennis_model_variants.no_late]    # the model shows no edge late in matches
+stages = ["early", "mid"]
+
+[strategies.tennis_model_variants.edge_exit]  # sell once the market pays more than the model's value
+exit_edge = 0.03
+
 [strategies.cross_market]        # B: baskets with verified settlement relationships
 mode = "paper"
 min_edge = 0.01                  # $/basket unit after all fees
@@ -122,8 +135,8 @@ adverse_horizon_s = 60
 max_book_age_s = 10
 
 [risk]
-max_fraction_per_trade = 0.02   # max loss of one trade, as a share of current equity
-max_position_cost = 25          # dollars
+max_fraction_per_trade = 0.02   # max loss of one trade, as a share of current equity (grows with the account)
+# max_position_cost = 25        # optional fixed dollar ceiling on top; unset = percentage only
 # Daily loss and drawdown limits block NEW entries; open positions can still lose their cost.
 max_daily_loss = 50             # dollars (UTC day, mark-to-bid)
 max_drawdown_fraction = 0.15    # triggers the persistent emergency stop
@@ -141,7 +154,7 @@ max_score_unchanged_s = 300
 max_mid_move_since_score_change = 0.10
 max_trades_per_market = 1
 max_trades_per_event = 1
-kelly_fraction = 0.10
+kelly_fraction = 0.20               # bet size scales with the conservative edge; 0.10 never reached the 2% cap
 unvalidated_size_multiplier = 1.0    # strategies without validated evidence; 1.0 = main sized like the shadow ledgers, 0.25 = cautious
 max_consecutive_errors = 5
 

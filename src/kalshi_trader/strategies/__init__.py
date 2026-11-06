@@ -29,5 +29,6 @@ def build_strategies(settings: Settings) -> list[Strategy]:
         CrossMarketStrategy(cfg.cross_market, fees),
         LateMatchFavoriteStrategy(cfg.late_match, fees),
         PriceThresholdStrategy(cfg.price_threshold, fees),
+        *(TennisModelStrategy(v, fees, name=n) for n, v in cfg.tennis_variants().items()),
     ]
     return [s for s in candidates if s.mode != "off"]

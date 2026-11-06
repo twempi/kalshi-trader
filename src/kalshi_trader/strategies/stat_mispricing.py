@@ -44,6 +44,7 @@ from kalshi_trader.config import (
 from kalshi_trader.core.opportunity import DecisionStatus, FairValue, Leg, Opportunity
 from kalshi_trader.execution.fees import fee_per_contract_estimate
 from kalshi_trader.execution.fills import snap_price_down
+from kalshi_trader.market_data.orderbook import OrderBook, Side
 from kalshi_trader.models.calibration import calibrate
 from kalshi_trader.models.ev import max_price_for_edge
 from kalshi_trader.strategies.base import MatchContext, ScanContext, Strategy
@@ -173,8 +174,11 @@ class TennisModelStrategy(Strategy):
     version = "1"
     requires_score = True
 
-    def __init__(self, settings: TennisModelStrategySettings, fees: FeeSettings) -> None:
+    def __init__(
+        self, settings: TennisModelStrategySettings, fees: FeeSettings, name: str = "tennis_model"
+    ) -> None:
         super().__init__(settings, fees)
+        self.name = name  # variants run under their own name (own ledger and evidence)
         self.settings: TennisModelStrategySettings = settings
         self.model: FairValueModel = TennisMarkovFairValue(
             settings.require_pre_match_prior,
@@ -299,3 +303,24 @@ class TennisModelStrategy(Strategy):
             reason = closest[1] if closest else ("; ".join(why) or "no executable option")
             return [self.note(ctx, DecisionStatus.FILTERED, reason, stage=stage)]
         return [best]
+
+    def exit_limit(
+        self, ctx: MatchContext, ticker: str, side: Side, book: OrderBook, fee_multiplier: Decimal
+    ) -> tuple[Decimal, str] | None:
+        """Sell when the market now pays more than the model thinks the position is worth:
+        bid - taker fee >= p + exit_edge, with p the point probability of the held side."""
+        edge = self.settings.exit_edge
+        tickers = ctx.match.market_tickers
+        if edge is None or ticker not in tickers or self.model.unsupported_reason(ctx):
+            return None
+        bid = book.best_bid(side)
+        if bid is None:
+            return None
+        index = tickers.index(ticker)
+        fair = self.model.fair_value(ctx, index if side == "yes" else 1 - index)
+        fee = fee_per_contract_estimate(
+            bid[0], LIMIT_FEE_HINT, self.fees.taker_rate, fee_multiplier
+        )
+        if float(bid[0] - fee) - fair.p < float(edge):
+            return None
+        return bid[0], f"edge flipped: bid {bid[0]} (fee {fee}) vs model p={fair.p:.3f}"
