@@ -55,6 +55,10 @@ def test_shipped_config_file_is_valid(monkeypatch: pytest.MonkeyPatch) -> None:
         "fd7a:115c:a1e0::/48",
     ]
     assert s.dashboard.host == "127.0.0.1"  # never bound to the network directly
+    comeback = s.strategies.tennis_variants()["tennis_model_comeback"]
+    assert comeback.mode == "observe" and comeback.entry_pattern == "first_set_comeback"
+    assert comeback.exit_edge == s.strategies.tennis_variants()["tennis_model_edge_exit"].exit_edge
+    assert s.strategies.tennis_model.entry_pattern is None
 
 
 def test_secret_values_are_masked(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -95,6 +99,7 @@ def test_tennis_model_variants_are_observe_only_copies(
     for bad in (
         '[strategies.tennis_model_variants."Bad Name"]\n',
         '[strategies.tennis_model_variants.x]\nstages = ["overtime"]\n',
+        '[strategies.tennis_model_variants.x]\nentry_pattern = "unknown"\n',
     ):
         cfg.write_text(bad)
         with pytest.raises(ValueError):

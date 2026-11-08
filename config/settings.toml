@@ -93,6 +93,10 @@ stages = ["early", "mid"]
 [strategies.tennis_model_variants.edge_exit]  # sell once the market pays more than the model's value
 exit_edge = 0.03
 
+[strategies.tennis_model_variants.comeback]   # observe-only test; the main strategy's evidence stays intact
+entry_pattern = "first_set_comeback"        # back the original favourite after a first-set loss, in set two of Bo3
+exit_edge = 0.03                            # reuse edge_exit's existing sale rule to isolate this entry pattern, without guessing a new target
+
 [strategies.cross_market]        # B: baskets with verified settlement relationships
 mode = "paper"
 min_edge = 0.01                  # $/basket unit after all fees

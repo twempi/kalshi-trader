@@ -107,6 +107,7 @@
     tennis_model_itf_only: ["Smaller tennis tournaments", "Tests the tennis prediction rules only in ITF tournaments."],
     tennis_model_no_late: ["Earlier in the match", "Tests the tennis prediction rules without entering near the end of a match."],
     tennis_model_edge_exit: ["Sell before the match ends", "Tests selling when buyers offer more than the bot thinks a contract is worth."],
+    tennis_model_comeback: ["Favourite after a first-set loss", "Tests backing the original favourite in set two after losing set one, and selling if buyers offer more than the bot's estimated value."],
   };
 
   function basicStatus(kind, title, detail) {

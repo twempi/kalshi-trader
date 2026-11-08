@@ -256,6 +256,10 @@ class TennisModelStrategySettings(StrategySettingsBase):
     # None = hold to settlement. Otherwise sell into the bid once the bid after the taker fee
     # exceeds the model's point probability for the held side by at least this much.
     exit_edge: Money | None = None
+    # Optional structural cohort filter, not a fitted probability adjustment. None preserves
+    # existing versions (config hashes exclude None). The comeback filter only backs the
+    # pre-match favourite while it is down one set in set two of a best-of-three match.
+    entry_pattern: Literal["first_set_comeback"] | None = None
 
 
 class CrossMarketStrategySettings(StrategySettingsBase):

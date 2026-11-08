@@ -153,9 +153,17 @@ rules never count. Operators can also pause/resume a single strategy at runtime 
 Each `[strategies.tennis_model_variants.<name>]` table overrides a few `tennis_model`
 settings; the copy runs as strategy `tennis_model_<name>`, always in `observe` mode, with its
 own shadow ledger (`/api/trades?ledger=tennis_model_<name>`). The shipped config runs
-`itf_only` (ITF tours only), `no_late` (no late-stage entries) and `edge_exit`
+`itf_only` (ITF tours only), `no_late` (no late-stage entries), `edge_exit`
 (`exit_edge = 0.03`: sell once the bid after the taker fee beats the model's point probability
-by 3¢, never on a stale or suspect score). Promote a winner by copying its settings into
+by 3¢, never on a stale or suspect score), and **`comeback`** (the original pre-match favourite
+has lost set one and set two is underway in a best-of-three match). The comeback experiment
+only backs that original favourite, through its YES contract or the opponent's NO contract,
+and uses the same entry checks and sale rule as `edge_exit`. Favourite means a pre-match
+chance above 50%; no new strength cutoff, recovery target or exit parameter was fitted or
+guessed. It does not assume every price drop is a bargain, predict short-term price rebounds,
+or fetch head-to-head history. It appears as **Favourite after a first-set loss** in Basic
+and `tennis_model_comeback` in Advanced, with its own shadow ledger and early-exit comparison.
+Promote a winner by copying its settings into
 `[strategies.tennis_model]`.
 
 ```bash
@@ -943,6 +951,42 @@ and match-cluster confidence intervals, plus final-outcome collection for exited
 after restart. The experiment's settings, version and the main strategy were preserved;
 the comparison requires deployment, while the existing experiment is already collecting
 forward paper evidence. No new take-profit threshold was guessed or fitted to these results.
+
+**Singh–Bessonov review 2026-11-07 (dashboard snapshot 2026-11-08 06:07 UTC):** the
+current model does not fetch player histories or head-to-head results. It anchors strength
+to pre-match prices and updates from the current score, server and available live serve
+statistics. In `KXITFMATCH-26NOV08SINBES`, Singh had lost the first set 2–6 and led the
+second 3–0. His YES ask was 67¢, versus model probability 63.35% and latency-adjusted
+conservative probability 50.27%; buying at that snapshot did not clear the entry rule.
+No main-account open position or completed tennis-model/early-exit shadow trade for this
+event appeared in the queried endpoints. The opportunities API returns latest decisions
+per opportunity, so this check does not reconstruct the beginning of the second set or
+establish whether a delayed, executable early purchase and later sale would have profited.
+An isolated comeback is not evidence for a strategy; a historical-strength or first-set-loss
+variant would need an independent forward test. No strategy settings changed.
+
+**Comeback experiment added 2026-11-07:** added the observe-only `tennis_model_comeback`
+variant (`entry_pattern = "first_set_comeback"`), motivated by the Singh–Bessonov question,
+not selected for profitability on that match. It backs only the original pre-match favourite
+after losing set one, while set two of a best-of-three match is underway, and only when the
+existing conservative model edge survives fees and execution checks. It reuses the existing
+`edge_exit` sale rule and all portfolio limits; it may hold to settlement when no sale
+qualifies. This is a structural forward-test hypothesis, not a fitted historical-strength
+model or a claim of a profitable rebound signal. Head-to-head/player-history data is still
+absent. Existing strategy version tags were checked unchanged, and synthetic tests verify
+shadow-only entry, rejection of the wrong player and insufficient edge, and exits after the
+entry window closes. Results start collecting after deployment; no forward results yet.
+
+**Real-money readiness review 2026-11-07:** `/api/strategies` still reported no validated
+strategy. The current tennis rules (`1+6b183f35`) had 39 settled shadow trades across
+39 events and +$207.62 after fees; the remaining configured evidence failure was 39/50
+trades. The ITF-only and no-late variants had eight completed trades each, and edge-exit
+had nine. These paper samples do not establish durable, executable profitability, and
+reaching the minimum count alone would not establish readiness for real money. Keep all
+strategies paper-only while collecting fresh evidence and validating delayed entry/exit
+fills. A future individually approved live strategy with other experiments left on paper
+is a possible architecture, not an implemented feature or an automatic promotion rule.
+Authenticated market data is already connected; the REST client remains GET-only.
 
 **Paper trading, first live check:** in a 2.5-minute
 live verification run on 2026-11-02 (3 matches in progress), every opportunity was evaluated

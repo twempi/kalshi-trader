@@ -237,11 +237,56 @@ class TennisModelStrategy(Strategy):
         if why is not None:
             return [self.note(ctx, DecisionStatus.UNSUPPORTED, why, stage=stage)]
 
+        players: tuple[int, ...] = (0, 1)
+        if s.entry_pattern == "first_set_comeback":
+            pre_match = ctx.pre_match_p1
+            if pre_match is None or not 0 < pre_match < 1:
+                return [
+                    self.note(
+                        ctx,
+                        DecisionStatus.UNSUPPORTED,
+                        "comeback: no usable pre-match probability",
+                        stage=stage,
+                    )
+                ]
+            if pre_match == 0.5:
+                return [
+                    self.note(
+                        ctx,
+                        DecisionStatus.FILTERED,
+                        "comeback: no unique pre-match favourite",
+                        stage=stage,
+                    )
+                ]
+            assert ctx.score is not None and ctx.score.score is not None
+            score = ctx.score.score
+            if score.fmt.best_of != 3:
+                return [
+                    self.note(
+                        ctx,
+                        DecisionStatus.UNSUPPORTED,
+                        "comeback: requires a best-of-three match",
+                        stage=stage,
+                    )
+                ]
+            favourite = 0 if pre_match > 0.5 else 1
+            if score.sets != ((0, 1) if favourite == 0 else (1, 0)):
+                return [
+                    self.note(
+                        ctx,
+                        DecisionStatus.FILTERED,
+                        "comeback: waiting for the pre-match favourite to lose set one; "
+                        "entries are limited to set two",
+                        stage=stage,
+                    )
+                ]
+            players = (favourite,)
+
         best: Opportunity | None = None
         best_ev = float("-inf")
         why: list[str] = []
         closest: tuple[float, str] | None = None  # best sub-threshold edge, for diagnostics
-        for player in (0, 1):
+        for player in players:
             fair = self.model.fair_value(ctx, player)
             for option in ctx.options_for(player):
                 label = f"{option.side.upper()} {option.market.ticker}"
@@ -297,6 +342,10 @@ class TennisModelStrategy(Strategy):
                 )
                 opp.provenance["probability_band"] = probability_band(fair.p)
                 opp.provenance["tour"] = ctx.match.tour_key
+                if s.entry_pattern is not None:
+                    opp.provenance["entry_pattern"] = s.entry_pattern
+                    opp.provenance["pre_match_p1"] = ctx.pre_match_p1
+                    opp.reason = "first-set comeback: " + opp.reason
                 if best is None or ev > best_ev:
                     best, best_ev = opp, ev
         if best is None:
