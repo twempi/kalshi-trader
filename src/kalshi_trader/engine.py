@@ -557,6 +557,9 @@ class TradingEngine:
                 due.append(ticker)
         # Positions in markets no longer tracked (e.g. after a restart) still need settling.
         due.extend(t for t in open_markets if t not in self.markets)
+        # An early sale releases exposure, but its final outcome is still needed to
+        # compare that sale with holding the same purchase. Closed trades stay closed.
+        due.extend(self.repo.unresolved_exit_markets())
         if not due:
             self.health["settlement"].ok(open_markets=len(open_markets), checked=0)
             return

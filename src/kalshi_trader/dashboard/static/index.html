@@ -3,28 +3,35 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Kalshi Trader - multi-strategy paper trading</title>
+  <title>Kalshi trading bot - practice account</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
-<body>
+<body data-dashboard="basic">
   <header class="top">
-    <h1>Kalshi quant research</h1>
-    <span class="sim-badge" title="No real orders are ever placed">SIMULATED / PAPER</span>
-    <span id="engine-pill" class="pill neutral"><span class="dot"></span><span>Engine: …</span></span>
-    <span id="trading-pill" class="pill neutral"><span class="dot"></span><span>Trading: …</span></span>
+    <h1>Kalshi trading bot</h1>
+    <span class="sim-badge" title="All trades use pretend money">PRACTICE MONEY</span>
+    <span id="engine-pill" class="pill neutral advanced-only"><span class="dot"></span><span>Engine: …</span></span>
+    <span id="trading-pill" class="pill neutral advanced-only"><span class="dot"></span><span>Trading: …</span></span>
     <span class="spacer"></span>
-    <button class="btn" id="btn-pause" type="button">Pause paper trading</button>
-    <button class="btn" id="btn-resume" type="button">Resume</button>
-    <button class="btn danger" id="btn-estop" type="button">Emergency stop</button>
-    <button class="btn" id="btn-clear-estop" type="button">Clear stop</button>
+    <div class="dashboard-switch" role="group" aria-label="Dashboard view">
+      <button id="mode-basic" type="button" aria-pressed="true">Basic</button>
+      <button id="mode-advanced" type="button" aria-pressed="false">Advanced</button>
+    </div>
+    <button class="btn advanced-only" id="btn-pause" type="button">Pause paper trading</button>
+    <button class="btn advanced-only" id="btn-resume" type="button">Resume</button>
+    <button class="btn danger advanced-only" id="btn-estop" type="button">Emergency stop</button>
+    <button class="btn advanced-only" id="btn-clear-estop" type="button">Clear stop</button>
     <button class="btn" id="btn-theme" type="button" aria-label="Toggle colour theme">Theme</button>
   </header>
   <div class="banner" id="banner">
+    <span class="basic-only">Real market prices. Pretend money. The bot is still being tested; practice gains do not guarantee future profit.</span>
+    <span class="advanced-only">
     Simulated paper trading on real, live Kalshi order books. No real orders are placed.
     Model probabilities are statistical estimates, not guarantees; a high win probability is
     not the same as positive expected value. No strategy has demonstrated profitability yet.
+    </span>
   </div>
-  <nav class="tabs" role="tablist">
+  <nav class="tabs advanced-only" role="tablist" aria-label="Advanced dashboard">
     <button role="tab" data-view="overview" aria-selected="true">Overview</button>
     <button role="tab" data-view="opportunities" aria-selected="false">Opportunities</button>
     <button role="tab" data-view="strategies" aria-selected="false">Strategies</button>
@@ -36,7 +43,60 @@
     <button role="tab" data-view="health" aria-selected="false">System health</button>
   </nav>
   <main>
-    <section class="view" id="view-overview">
+    <section class="view basic-dashboard" id="view-basic" aria-labelledby="basic-heading">
+      <div class="basic-intro">
+        <div>
+          <h2 id="basic-heading">Your bot at a glance</h2>
+          <p class="muted">How your practice account is doing, and what the bot is testing.</p>
+        </div>
+        <span class="muted small" id="basic-updated">Waiting for the first update…</span>
+      </div>
+      <div class="card basic-status">
+        <div class="grow">
+          <div id="basic-status-pill" role="status"><span class="pill neutral">Checking the bot…</span></div>
+          <p id="basic-status-detail" class="muted">Loading the latest account information.</p>
+        </div>
+        <div class="basic-controls">
+          <button class="btn" id="basic-toggle" type="button" disabled>Pause new trades</button>
+          <span class="muted small">Pausing stops new main-account trades. Open trades and separate tests keep running.</span>
+        </div>
+      </div>
+      <div class="kpis basic-kpis" id="basic-kpis" aria-label="Practice account summary"></div>
+      <p class="basic-estimate muted small">Open trades are estimated using what buyers currently offer. Selling fees could reduce that value.</p>
+      <div class="card">
+        <div class="card-head">
+          <div class="grow">
+            <h2>Your practice account over time</h2>
+            <p class="caption">Includes the estimated value of trades that are still open.</p>
+          </div>
+          <button class="btn" type="button" data-advanced-view="analytics">More details</button>
+        </div>
+        <div id="basic-equity"><p class="empty">Loading your account history…</p></div>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <div class="grow">
+            <h2>Strategies being tested</h2>
+            <p class="caption">A strategy is a set of rules for buying and selling. Each strategy's test results are kept separate.</p>
+          </div>
+          <button class="btn" type="button" data-advanced-view="strategies">More details</button>
+        </div>
+        <div id="basic-strategies" class="basic-strategies"><p class="empty">Loading the strategy tests…</p></div>
+        <p class="basic-footnote muted small">These results use each strategy's current rules and do not add up to the main account above.
+          A few winning trades can happen by chance. A positive balance alone does not prove a strategy works.</p>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <div class="grow">
+            <h2>Latest finished trades</h2>
+            <p class="caption">The five most recent results in your main practice account, after fees.</p>
+          </div>
+          <button class="btn" type="button" data-advanced-view="activity">See all trades</button>
+        </div>
+        <div id="basic-trades" class="basic-trades"><p class="empty">Loading your recent trades…</p></div>
+      </div>
+    </section>
+    <section class="view" id="view-overview" hidden>
       <div class="kpis" id="kpis"></div>
       <div class="grid-2">
         <div class="card">
@@ -120,6 +180,13 @@
           restricted to what the strategy could trade. Lower log loss is better. The decision check buys one contract
           at the first observation per held-out match that clears the entry rule and holds it to settlement.</p>
         <div id="research-calibration"></div>
+      </div>
+      <div class="card">
+        <h2>Early selling vs holding to settlement</h2>
+        <p class="caption">Each experiment compared with holding its exact purchases, at the same sizes, to settlement.
+          Both totals include fees and exclude unfinished markets, even when a position was sold already.
+          Positive difference favours early selling. Simulated fills; execution delays and capital reuse are not tested.</p>
+        <div id="research-exits"></div>
       </div>
       <div class="card">
         <h2>Market making - research simulation</h2>

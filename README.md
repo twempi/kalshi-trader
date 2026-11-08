@@ -361,6 +361,18 @@ Start `uv run kalshi-trader run` (or `uv run kalshi-trader dashboard`) and open
 **http://127.0.0.1:8787**. It binds to localhost only. Change the port with
 `KT_DASHBOARD__PORT=9000`.
 
+The dashboard opens in **Basic** view by default. It shows practice account value, total
+gain or loss, available cash, open trades, account history, plain-English strategy summaries
+and the five latest completed trades. Strategy summaries use only the current rules' test
+results and keep them separate from the main account. Labels explain estimated values and
+make clear that a positive practice result alone does not prove profitability.
+
+Use **Basic / Advanced** in the header to switch views; the browser remembers your choice.
+Basic's **Pause new trades / Resume new trades** controls the main paper account only;
+existing positions and separate experiments continue. Its **More details** buttons open
+the relevant Advanced tab. Safety-stop controls and all original detailed tables, charts,
+filters, research reports and exports remain in **Advanced**, with the tabs below.
+
 | Tab | Contents |
 | --- | --- |
 | Overview | Simulated equity, total / realised / unrealised / daily P&L, drawdown, available capital, open positions, active strategies, system health, equity chart, recent activity |
@@ -659,6 +671,23 @@ recorded P&L and checks the reconstruction. `pnl_retained` is the share of the p
 that survives the delay; `missed_trades_actual_pnl` shows whether the trades that vanish
 were the winners.
 
+### 6. Early selling vs holding
+
+The Research tab's **Early selling vs holding to settlement** table
+(`/api/research/early-exits`) evaluates every configured tennis variant with an `exit_edge`.
+It uses only that strategy's current version and its standalone shadow ledger. For each
+purchase, compare the actual simulated P&L (including entry and sale fees, partial exits
+and any remaining settlement payout) with holding the exact same contracts to settlement.
+Positive difference means the exit decisions earned more on those purchases.
+
+Both totals wait for a final market outcome and a completed trade. A position sold early
+is still shown as pending until the market settles; open positions are also pending, so
+unfinished trades cannot inflate either total. The engine continues fetching final outcomes
+for fully sold positions after restarts, without paying those positions again. Confidence
+intervals resample whole matches. This isolates exit decisions, not the effect of reusing
+released capital, and does not validate execution delays or prove profitability. It never
+promotes a strategy or changes its evidence status automatically.
+
 ## Strategy evaluation and selection
 
 Each strategy's status (`kalshi-trader strategies`, Strategies tab):
@@ -865,6 +894,55 @@ The current rules (`1+6b183f35`) have 30 of the 50 trades needed and are still u
   ([Fill delay](#5-fill-delay)), and three observe-only variants (`itf_only`, `no_late`,
   `edge_exit`, see [Strategies](#strategies-and-operating-modes)). Compare them after about
   300 trades.
+
+**Review 2026-11-07 (live dashboard snapshot around 2026-11-08 04:50 UTC):** main paper
+equity was $1,191.59 on a $1,000 start, including two open positions marked to bid;
+136 completed trade rows had realised $192.96 after fees. These totals mix earlier rules
+and sizes. No strategy was validated, and no trading settings were changed in this review.
+
+- **Current tennis evidence:** `1+6b183f35` had 37 settled shadow trades across 37 events,
+  +$183.59 after fees, versus +$42.63 of ex-ante model-expected P&L. Its statistical checks
+  passed at this snapshot, but it still lacked the configured minimum of 50 trades. The
+  realised excess over the forecast is not an estimate of repeatable profit. Freeze the
+  rules and collect fresh evidence across more days and tournaments before increasing size;
+  the minimum trade count alone does not establish realistic execution or persistence.
+- **Execution data is the first priority:** live health reported WebSocket disabled because
+  no API credentials were configured, REST polling active, and 18 rate-limit responses since
+  process start. Configure a read-only key for the existing WebSocket feed and verify its
+  live recovery behaviour. Book streaming cannot fix latency in the separate score feed.
+  The fill-delay report reconstructed all 126 eligible main-account directional trades at
+  delay zero exactly (+$192.30); at five seconds it returned +$184.83 (96.1%), with 118 full
+  fills, two partial fills and six misses. This is a fixed-size reconstruction over mixed
+  rules, not a portfolio replay. It uses the last recorded book at or before each target
+  time without an age bound; REST polling and recording only changed books leave intervals
+  unobserved. Record observation coverage and measure quote survival and post-signal price
+  moves before treating this as evidence of executable profit.
+- **Variants remain inconclusive:** `itf_only` and `no_late` each had six settled shadow
+  trades and identical +$88.19 results; `edge_exit` had eight and +$102.52. Compare paired
+  event results over a common evaluation window, including open-position values and exit
+  costs. Earlier closure or overlapping trades must not be mistaken for an independent win.
+- **Calibration still recommends no change:** 147,933 eligible observations over 1,404
+  events, with 388 held-out events. Raw-model versus market-mid log-loss difference was
+  -0.00013 (95% CI [-0.00844, +0.00818]); the best recalibration's improvement over the raw
+  model also included zero. Player/surface serve-and-return priors and independent reference
+  prices are research hypotheses to test on future data, not supported replacements yet.
+- **Expand only after measuring the edge:** generic cross-market discovery remained empty;
+  cross-market main-account P&L was +$0.66 overall. Additional verified settlement groups
+  could be tested in observe mode, with all leg fees, liquidity and failed-leg costs.
+  Larger Kelly fractions, looser entry filters and faster turnover have no new supporting
+  evidence here. Any eventual scaling should pass liquidity-capacity checks and drawdown
+  stress tests that preserve clustering by day/tournament, including ongoing data costs.
+
+**Early-exit experiment review 2026-11-07:** verified through the live dashboard API that
+`tennis_model_edge_exit` was already running alongside the other strategies, in `observe`
+mode, unpaused, with version `1+ac00da6e`. It had nine completed shadow trades (+$103.36
+after fees), two of which had actually sold before settlement; these are far too few to
+establish profitability or an advantage over holding. Added a current-version comparison
+against holding its exact purchases, with fees, partial sales, pending-market exclusions
+and match-cluster confidence intervals, plus final-outcome collection for exited positions
+after restart. The experiment's settings, version and the main strategy were preserved;
+the comparison requires deployment, while the existing experiment is already collecting
+forward paper evidence. No new take-profit threshold was guessed or fitted to these results.
 
 **Paper trading, first live check:** in a 2.5-minute
 live verification run on 2026-11-02 (3 matches in progress), every opportunity was evaluated

@@ -555,6 +555,29 @@ def create_app(settings: Settings, db: Database | None = None) -> FastAPI:
 
     calibration_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 
+    @app.get("/api/research/early-exits")
+    def research_early_exits() -> dict[str, Any]:
+        """Compare each exit experiment with holding its exact purchases to settlement."""
+        from kalshi_trader.research.exits import exit_comparison_report
+        from kalshi_trader.strategies import build_strategies
+
+        accts = accounts()
+        reports = []
+        for strategy in build_strategies(settings):
+            if getattr(strategy.settings, "exit_edge", None) is None:
+                continue
+            shadow = accts.get(f"shadow:{strategy.name}")
+            reports.append(
+                {
+                    "strategy": strategy.name,
+                    "mode": strategy.mode,
+                    **exit_comparison_report(
+                        database, shadow.id if shadow else None, strategy.version_tag
+                    ),
+                }
+            )
+        return {"label": DATA_LABEL, "strategies": reports}
+
     @app.get("/api/research/calibration")
     def research_calibration() -> dict[str, Any]:
         """Fit and held-out check of the tennis model's probability calibration."""

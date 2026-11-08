@@ -3,7 +3,11 @@
 (function () {
   "use strict";
   const $ = (id) => document.getElementById(id);
-  const state = { view: "overview", markets: [], timers: [], analyticsAt: 0 };
+  const state = { view: "basic", advancedView: "overview", mode: "basic", overview: null,
+    markets: [], timers: [], analyticsAt: 0, basicChartAt: 0 };
+
+  function preference(key) { try { return localStorage.getItem(key); } catch { return null; } }
+  function savePreference(key, value) { try { localStorage.setItem(key, value); } catch { /* Optional on shared/private browsers. */ } }
 
   // ------------------------------------------------------------ formatting
   const num = (v, d = 2) => (v === null || v === undefined || Number.isNaN(v) ? "–" : Number(v).toFixed(d));
@@ -28,7 +32,11 @@
     p.append(node("span", "dot"), node("span", null, text));
     return p;
   }
-  function setPill(id, kind, text) { $(id).replaceWith(Object.assign(pill(kind, text), { id })); }
+  function setPill(id, kind, text) {
+    const old = $(id), next = Object.assign(pill(kind, text), { id });
+    if (old.classList.contains("advanced-only")) next.classList.add("advanced-only");
+    old.replaceWith(next);
+  }
 
   async function api(path, options) {
     const res = await fetch(path, options);
@@ -87,6 +95,111 @@
       setPill("engine-pill", "critical", "Dashboard API unreachable");
       return null;
     }
+  }
+
+  // ------------------------------------------------------- basic dashboard
+  const strategyDescriptions = {
+    tennis_model: ["Tennis predictions", "Looks for tennis contracts priced below the bot's estimate of their value."],
+    cross_market: ["Related market trades", "Looks for price differences between contracts linked to the same outcome."],
+    late_match: ["Near the end of a match", "Tests buying the favourite close to the end of a tennis match."],
+    price_threshold: ["Favourites at a set price", "Tests buying a favourite when its price falls within a chosen range."],
+    market_making: ["Buying and selling price test", "Simulates offering prices to other traders. This has its own detailed research results."],
+    tennis_model_itf_only: ["Smaller tennis tournaments", "Tests the tennis prediction rules only in ITF tournaments."],
+    tennis_model_no_late: ["Earlier in the match", "Tests the tennis prediction rules without entering near the end of a match."],
+    tennis_model_edge_exit: ["Sell before the match ends", "Tests selling when buyers offer more than the bot thinks a contract is worth."],
+  };
+
+  function basicStatus(kind, title, detail) {
+    const holder = $("basic-status-pill");
+    if (holder.textContent !== title) holder.replaceChildren(pill(kind, title));
+    $("basic-status-detail").textContent = detail;
+  }
+
+  function renderBasicSummary(o) {
+    state.overview = o;
+    if (!o) {
+      basicStatus("critical", "Cannot reach the bot", "The numbers below may be out of date. Check the connection or open Advanced → System health.");
+      $("basic-toggle").disabled = true;
+      $("basic-updated").textContent = "Could not refresh the account";
+      return;
+    }
+    if (!o.engine_running) basicStatus("critical", "Bot is not running", "Results are saved, but the bot is not currently collecting prices or making practice trades. Check System health in Advanced.");
+    else if (o.emergency_stop) basicStatus("critical", "Safety stop is on", "New main-account trades are blocked. Review the reason and the safety controls in Advanced before clearing the stop.");
+    else if (o.record_only) basicStatus("neutral", "Collecting prices only", "The bot is saving market data. Practice trading is turned off for this run.");
+    else if (!o.trading_enabled) basicStatus("warning", "Main practice account is paused", "No new trades will be opened in the main account. Existing trades and separate strategy tests keep running.");
+    else if ((o.unhealthy_components || []).length) basicStatus("warning", "Some parts of the bot need attention", "The bot may skip trades while data is unavailable or delayed. Open Advanced → System health for details.");
+    else basicStatus("good", "Bot is running", "It is watching prices and testing trades. Waiting when there is no suitable trade is normal.");
+    const button = $("basic-toggle");
+    button.textContent = o.trading_enabled ? "Pause new trades" : "Resume new trades";
+    button.disabled = !o.engine_running || o.emergency_stop || o.record_only;
+    $("basic-kpis").replaceChildren(
+      tile("Practice account value", money(o.equity), `Started with ${money(o.starting_balance)}`, "", true),
+      tile("Total gain or loss", signedMoney(o.total_pnl), `From finished trades: ${signedMoney(o.realized_pnl)}`, signClass(o.total_pnl)),
+      tile("Cash available", money(o.available_cash), "Ready for new practice trades"),
+      tile("Open trades", String(o.open_positions), `${money(o.open_value)} estimated current value`),
+    );
+    $("basic-updated").textContent = `Updated ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`;
+  }
+
+  function renderBasicStrategies(strategies) {
+    const box = $("basic-strategies");
+    box.replaceChildren();
+    const active = strategies.filter((s) => s.mode !== "off");
+    if (!active.length) { box.appendChild(node("p", "empty", "No strategy tests are switched on yet.")); return; }
+    for (const s of active) {
+      const [name, description] = strategyDescriptions[s.name] || ["Additional trading test", "Another set of rules being tested in a separate practice account."];
+      const item = node("article", "basic-strategy");
+      const heading = node("div", "basic-strategy-heading");
+      heading.appendChild(node("h3", null, name));
+      const evidence = s.evidence || {}, metrics = evidence.metrics || {};
+      const simulation = s.name === "market_making";
+      const verdict = simulation ? "Research simulation" : evidence.negative ? "Results need review" : evidence.validated ? "Passed current paper checks" : "Still being tested";
+      heading.appendChild(pill(evidence.negative ? "warning" : "neutral", verdict));
+      item.append(heading, node("p", "muted", description));
+      if (simulation) item.appendChild(node("p", "basic-strategy-result", "See its separate results in Advanced → Research."));
+      else {
+        const count = evidence.trades || 0;
+        const result = node("p", "basic-strategy-result");
+        if (count && metrics.total_pnl != null) result.append(node("strong", signClass(metrics.total_pnl), signedMoney(metrics.total_pnl)), document.createTextNode(` after fees · ${count} finished ${count === 1 ? "trade" : "trades"}`));
+        else result.textContent = "No finished trades under the current rules yet.";
+        item.appendChild(result);
+      }
+      item.appendChild(node("span", "muted small", s.mode === "paper" ? (s.paused || s.status === "rejected" ? "Main-account entries paused; separate test continues" : "Also trades in the main practice account") : "Separate test only · main account unaffected"));
+      box.appendChild(item);
+    }
+  }
+
+  function renderBasicTrades(trades) {
+    const box = $("basic-trades");
+    box.replaceChildren();
+    if (!trades.length) { box.appendChild(node("p", "empty", "No finished trades yet. Results will appear as the bot closes trades or matches settle.")); return; }
+    for (const trade of trades) {
+      const row = node("div", "basic-trade");
+      const details = node("div");
+      details.append(node("strong", null, trade.match_title || trade.player_name || "Tennis match"), node("div", "muted small", `${trade.status === "closed" ? "Sold before settlement" : "Settled"} · ${when(trade.closed_ts)}`));
+      const value = trade.realized_pnl;
+      const label = value == null ? "Result unavailable" : `${value > 0 ? "Gained" : value < 0 ? "Lost" : "No change"} ${value ? money(Math.abs(value)) : ""}`;
+      row.append(details, node("strong", "basic-trade-result " + signClass(value), label.trim()));
+      box.appendChild(row);
+    }
+  }
+
+  async function renderBasic() {
+    const o = await refreshHeader();
+    renderBasicSummary(o);
+    if (!o) return;
+    const parts = [
+      ["basic-strategies", "/api/strategies", (d) => renderBasicStrategies(d.strategies)],
+      ["basic-trades", "/api/trades?limit=5", (d) => renderBasicTrades(d.trades)],
+    ];
+    if (Date.now() - state.basicChartAt > 60000) parts.push(["basic-equity", "/api/analytics", (d) => {
+      Charts.line($("basic-equity"), d.equity_curve, { yFormat: money, label: "Practice account value", area: false, empty: "Your account history will appear after the bot saves a few updates." });
+      state.basicChartAt = Date.now();
+    }]);
+    await Promise.all(parts.map(async ([id, path, render]) => {
+      try { render(await api(path)); }
+      catch { $(id).replaceChildren(node("p", "empty", "Could not load these results. The dashboard will try again automatically.")); }
+    }));
   }
 
   // ----------------------------------------------------------- overview
@@ -416,6 +529,23 @@
     if (rec.toml) box.appendChild(node("pre", "json", rec.toml));
   }
 
+  async function renderExits() {
+    const r = await api("/api/research/early-exits");
+    const box = $("research-exits");
+    box.replaceChildren();
+    table(box.appendChild(node("div", "table-wrap")), [
+      { label: "Experiment (current version)", fmt: (x) => `${x.strategy} · ${x.strategy_version}` },
+      { label: "Compared matches", num: true, key: "compared_events" },
+      { label: "Trades with early sales", num: true, key: "early_exit_trades" },
+      { label: "Pending trades", num: true, key: "pending_trades" },
+      { label: "Experiment P&L", num: true, fmt: (x) => signedMoney(x.actual_pnl) },
+      { label: "Same purchases held", num: true, fmt: (x) => signedMoney(x.hold_pnl) },
+      { label: "Difference", num: true, cls: (x) => signClass(x.difference), fmt: (x) => signedMoney(x.difference) },
+      { label: "Difference / trade (95% CI)", num: true, fmt: (x) => x.mean_difference_ci95 ? `[${signedMoney(x.mean_difference_ci95[0])}, ${signedMoney(x.mean_difference_ci95[1])}]` : "–" },
+    ], r.strategies || [], { empty: "No early-exit experiments configured." });
+    box.appendChild(node("p", "muted small", "Confidence intervals resample whole matches. Small samples and repeated comparisons can be misleading; a positive result here does not validate a strategy or promote it to the main account."));
+  }
+
   async function renderResearch() {
     await refreshHeader();
     const r = await api("/api/research");
@@ -433,6 +563,7 @@
       { label: "Brier model", num: true, fmt: (x) => num(x.brier_model, 4) }, { label: "Brier market", num: true, fmt: (x) => num(x.brier_market, 4) },
     ], stages, { empty: "No settled predictions yet." });
     renderCalibration().catch((e) => $("research-calibration").replaceChildren(node("p", "neg", String(e))));
+    renderExits().catch((e) => $("research-exits").replaceChildren(node("p", "neg", String(e))));
     const mm = r.market_making || {};
     const s = mm.summary;
     const mbox = $("research-mm");
@@ -482,9 +613,9 @@
   }
 
   // -------------------------------------------------------------- shell
-  const renderers = { overview: renderOverview, opportunities: renderOpportunities, strategies: renderStrategies, diagnostics: renderDiagnostics,
+  const renderers = { basic: renderBasic, overview: renderOverview, opportunities: renderOpportunities, strategies: renderStrategies, diagnostics: renderDiagnostics,
     markets: renderMarkets, activity: renderActivity, analytics: renderAnalytics, research: renderResearch, health: renderHealth };
-  const intervals = { overview: 5000, opportunities: 3000, strategies: 10000, diagnostics: 5000, markets: 2000, activity: 5000, analytics: 15000, research: 30000, health: 5000 };
+  const intervals = { basic: 10000, overview: 5000, opportunities: 3000, strategies: 10000, diagnostics: 5000, markets: 2000, activity: 5000, analytics: 15000, research: 30000, health: 5000 };
 
   async function refresh() {
     const view = $("view-" + state.view);
@@ -495,12 +626,27 @@
     state.timers.forEach(clearInterval);
     state.timers = [setInterval(refresh, intervals[state.view])];
   }
-  document.querySelectorAll("nav.tabs button").forEach((b) => b.addEventListener("click", () => {
-    state.view = b.dataset.view;
-    document.querySelectorAll("nav.tabs button").forEach((x) => x.setAttribute("aria-selected", String(x === b)));
+  function showDashboard(mode, advancedView = state.advancedView, remember = true) {
+    const changed = state.view !== (mode === "basic" ? "basic" : advancedView);
+    if (changed && mode === "basic") state.basicChartAt = 0;
+    state.mode = mode;
+    state.advancedView = advancedView;
+    state.view = mode === "basic" ? "basic" : advancedView;
+    document.body.dataset.dashboard = mode;
+    $("mode-basic").setAttribute("aria-pressed", String(mode === "basic"));
+    $("mode-advanced").setAttribute("aria-pressed", String(mode === "advanced"));
+    if (remember) savePreference("kt-dashboard-mode", mode);
+    document.querySelectorAll("nav.tabs button").forEach((x) => x.setAttribute("aria-selected", String(x.dataset.view === state.view)));
     document.querySelectorAll("section.view").forEach((s) => { s.hidden = s.id !== "view-" + state.view; });
+    if (changed) window.scrollTo(0, 0);
     refresh(); schedule();
+  }
+  document.querySelectorAll("nav.tabs button").forEach((b) => b.addEventListener("click", () => {
+    showDashboard("advanced", b.dataset.view);
   }));
+  $("mode-basic").addEventListener("click", () => showDashboard("basic"));
+  $("mode-advanced").addEventListener("click", () => showDashboard("advanced"));
+  document.querySelectorAll("[data-advanced-view]").forEach((b) => b.addEventListener("click", () => showDashboard("advanced", b.dataset.advancedView)));
   ["mk-search", "mk-tour", "mk-live", "mk-opps", "mk-sort"].forEach((id) => $(id).addEventListener("input", renderMarketsTable));
   ["op-strategy", "op-status", "op-category", "op-actionable"].forEach((id) => $(id).addEventListener("input", renderOpportunities));
 
@@ -514,13 +660,19 @@
   $("btn-resume").addEventListener("click", () => control("resume"));
   $("btn-estop").addEventListener("click", () => control("emergency_stop", "Engage the emergency stop? Paper trading halts until you clear it."));
   $("btn-clear-estop").addEventListener("click", () => control("clear_emergency_stop", "Clear the emergency stop?"));
+  $("basic-toggle").addEventListener("click", () => {
+    const o = state.overview;
+    if (!o || $("basic-toggle").disabled) return;
+    $("basic-toggle").disabled = true;
+    control(o.trading_enabled ? "pause" : "resume");
+  });
   $("btn-theme").addEventListener("click", () => {
     const root = document.documentElement;
     const dark = root.dataset.theme ? root.dataset.theme === "dark" : window.matchMedia("(prefers-color-scheme: dark)").matches;
     root.dataset.theme = dark ? "light" : "dark";
-    localStorage.setItem("kt-theme", root.dataset.theme);
+    savePreference("kt-theme", root.dataset.theme);
   });
-  const saved = localStorage.getItem("kt-theme");
+  const saved = preference("kt-theme");
   if (saved) document.documentElement.dataset.theme = saved;
-  refresh(); schedule();
+  showDashboard(preference("kt-dashboard-mode") === "advanced" ? "advanced" : "basic", "overview", false);
 })();

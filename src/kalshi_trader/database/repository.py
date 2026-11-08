@@ -7,7 +7,7 @@ import time
 from collections.abc import Iterable, Sequence
 from typing import Any
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from kalshi_trader.database.db import Database
@@ -19,6 +19,7 @@ from kalshi_trader.database.tables import (
     MarketSnapshotRow,
     ModelPredictionRow,
     OpportunityRow,
+    PaperTradeRow,
     ScoreSnapshotRow,
     SeriesRow,
     SignalRow,
@@ -190,6 +191,25 @@ class Repository:
     def get_market(self, ticker: str) -> MarketRow | None:
         with self.db.session() as s:
             return s.get(MarketRow, ticker)
+
+    def unresolved_exit_markets(self) -> list[str]:
+        """Keep learning final outcomes after a position was fully sold, even after restart."""
+        with self.db.session() as s:
+            return list(
+                s.scalars(
+                    select(PaperTradeRow.market_ticker)
+                    .outerjoin(MarketRow, MarketRow.ticker == PaperTradeRow.market_ticker)
+                    .where(
+                        PaperTradeRow.status == "closed",
+                        PaperTradeRow.exit_contracts > 0,
+                        or_(
+                            MarketRow.status.is_(None),
+                            MarketRow.status.not_in(("finalized", "settled")),
+                        ),
+                    )
+                    .distinct()
+                )
+            )
 
     def get_event(self, event_ticker: str) -> EventRow | None:
         with self.db.session() as s:

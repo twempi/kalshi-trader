@@ -214,6 +214,31 @@ async def test_full_cycle_trades_and_settles(engine: TradingEngine) -> None:
     assert any(h.component == "kalshi_rest" for h in engine.repo.all_health())
 
 
+async def test_engine_records_exited_markets_outcome_after_restart(engine: TradingEngine) -> None:
+    from kalshi_trader.execution.paper import PaperBroker
+    from tests.test_exit_comparison import VERSION, buy, sell
+
+    broker = PaperBroker(
+        engine.db, engine.settings.paper, engine.settings.fees, account_name="shadow:exit-test"
+    )
+    ticker = "KXATPMATCH-TEST-A"
+    sell(broker, buy(broker, ticker=ticker, version=VERSION))
+    before = broker.account().cash
+    assert not engine.core.open_market_tickers()  # fully sold; no capital remains at risk
+    engine.markets.clear()  # restart: the in-memory discovery state is gone
+    assert engine.repo.unresolved_exit_markets() == [ticker]
+    engine.rest.final = {ticker: ("finalized", "yes")}
+    await engine._status_step()
+    market = engine.repo.get_market(ticker)
+    assert market is not None and market.settlement_value == D("1")
+    assert not engine.repo.unresolved_exit_markets()
+    assert broker.account().cash == before  # learning the outcome never pays an exited position
+    from kalshi_trader.research.exits import exit_comparison_report
+
+    report = exit_comparison_report(engine.db, broker.account_id, VERSION)
+    assert report["compared_trades"] == 1 and report["difference"] == -4.17
+
+
 async def test_engine_respects_pause_and_record_only(settings: Settings) -> None:
     settings.model.uncertainty_samples = 32
     settings.model.prior_draws = 1000
