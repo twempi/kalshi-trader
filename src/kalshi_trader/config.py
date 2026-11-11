@@ -260,6 +260,9 @@ class TennisModelStrategySettings(StrategySettingsBase):
     # existing versions (config hashes exclude None). The comeback filter only backs the
     # pre-match favourite while it is down one set in set two of a best-of-three match.
     entry_pattern: Literal["first_set_comeback"] | None = None
+    # None = no cap. Otherwise skip an option when the model's point probability exceeds its
+    # ask by more than this: a large gap against a liquid market is more often model error.
+    max_model_gap: Money | None = None
 
 
 class CrossMarketStrategySettings(StrategySettingsBase):

@@ -97,6 +97,12 @@ exit_edge = 0.03
 entry_pattern = "first_set_comeback"        # back the original favourite after a first-set loss, in set two of Bo3
 exit_edge = 0.03                            # reuse edge_exit's existing sale rule to isolate this entry pattern, without guessing a new target
 
+[strategies.tennis_model_variants.itf_women]  # the only tour profitable both before and after the 2026-11-08 review; a subgroup pick, so forward-test it
+tours = ["ITF_WOMEN"]
+
+[strategies.tennis_model_variants.gap_cap]    # 2026-11-11: model 20-30c above the ask won no more than the ask implied (-$122); 0.20 comes from that data, so only forward results count
+max_model_gap = 0.20
+
 [strategies.cross_market]        # B: baskets with verified settlement relationships
 mode = "paper"
 min_edge = 0.01                  # $/basket unit after all fees
@@ -158,8 +164,8 @@ max_score_unchanged_s = 300
 max_mid_move_since_score_change = 0.10
 max_trades_per_market = 1
 max_trades_per_event = 1
-kelly_fraction = 0.20               # bet size scales with the conservative edge; 0.10 never reached the 2% cap
-unvalidated_size_multiplier = 1.0    # strategies without validated evidence; 1.0 = main sized like the shadow ledgers, 0.25 = cautious
+kelly_fraction = 0.10               # bet size scales with the conservative edge; back from 0.20 after the 15% drawdown on 2026-11-11 (the model overstated its edge ~4x)
+unvalidated_size_multiplier = 0.25   # strategies without validated evidence; 0.25 = cautious (was 1.0); tennis_model is unvalidated again on 2026-11-11 (p = 0.098)
 max_consecutive_errors = 5
 
 [evidence]                       # what a strategy must show (forward, out-of-sample) to be "validated"

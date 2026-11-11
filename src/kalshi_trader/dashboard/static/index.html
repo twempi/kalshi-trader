@@ -95,6 +95,16 @@
         </div>
         <div id="basic-trades" class="basic-trades"><p class="empty">Loading your recent trades…</p></div>
       </div>
+      <div class="card">
+        <div class="card-head">
+          <div class="grow">
+            <h2>Storage used</h2>
+            <p class="caption">Space the bot's saved data and logs take up on the computer it runs on.</p>
+          </div>
+          <button class="btn" type="button" data-advanced-view="health">More details</button>
+        </div>
+        <div id="basic-storage"><p class="empty">Checking storage…</p></div>
+      </div>
     </section>
     <section class="view" id="view-overview" hidden>
       <div class="kpis" id="kpis"></div>
@@ -283,6 +293,11 @@
         <h2>Components</h2>
         <p class="caption">Kalshi REST/WebSocket, tennis score feed, exchange status and engine loops.</p>
         <div class="table-wrap" id="health-table"></div>
+      </div>
+      <div class="card">
+        <h2>Storage</h2>
+        <p class="caption" id="health-storage-path">Disk space used by the bot's database, logs and other data files.</p>
+        <div class="kpis" id="health-storage"></div>
       </div>
       <div class="card">
         <h2>Recent warnings and errors</h2>

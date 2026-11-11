@@ -564,3 +564,21 @@ def test_replay_settles_chronologically_and_recycles_capital(tmp_path, settings:
     assert main[0].closed_ts == 500.0 and main[1].opened_ts == 605.0
     assert main[1].cost > 5  # sized from cash that only exists after the first settlement
     assert result.info["settlements_applied"] == 4
+
+
+def test_max_model_gap_skips_large_model_market_disagreements() -> None:
+    from tests.test_comeback import comeback_context
+
+    def run(gap: str | None):
+        settings = TennisModelStrategySettings(max_model_gap=None if gap is None else D(gap))
+        (opp,) = TennisModelStrategy(settings, FeeSettings()).evaluate_match(comeback_context())
+        return opp
+
+    # Player A: model p = 0.60 against asks of 0.40 (YES A) and 0.42 (NO B), gaps 0.20 and 0.18.
+    assert run(None).status == DecisionStatus.CANDIDATE
+    assert run("0.25").status == DecisionStatus.CANDIDATE
+    assert run("0.15").status == DecisionStatus.FILTERED
+    # Unset stays out of the config hash, so existing version tags keep their evidence.
+    plain = TennisModelStrategy(TennisModelStrategySettings(), FeeSettings())
+    explicit = TennisModelStrategy(TennisModelStrategySettings(max_model_gap=None), FeeSettings())
+    assert plain.version_tag == explicit.version_tag

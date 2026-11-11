@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal as D
 from typing import Any
@@ -335,12 +336,24 @@ def test_dashboard_endpoints(settings: Settings) -> None:
         "/api/diagnostics",
         "/api/exposure",
         "/api/research",
+        "/api/storage",
     ):
         response = client.get(path)
         assert response.status_code == 200, path
     assert "SIMULATED" in client.get("/api/overview").json()["label"]
     csv = client.get("/api/export/trades.csv")
     assert csv.status_code == 200 and csv.text.startswith("id,strategy,market_ticker")
+
+
+def test_storage_counts_database_logs_and_other_files(settings: Settings) -> None:
+    client = TestClient(create_app(settings))  # creates the database
+    settings.log_dir.mkdir(parents=True, exist_ok=True)
+    (settings.log_dir / "kalshi-trader.jsonl").write_bytes(os.urandom(100_000))
+    (settings.db_path.parent / "cache.json").write_bytes(os.urandom(50_000))
+    s = client.get("/api/storage").json()
+    assert s["logs_bytes"] >= 100_000 and s["database_bytes"] > 0
+    assert s["total_bytes"] >= s["database_bytes"] + s["logs_bytes"] + 50_000
+    assert 0 < s["disk_free_bytes"] <= s["disk_total_bytes"]
 
 
 async def test_dashboard_shows_engine_decisions(engine: TradingEngine) -> None:

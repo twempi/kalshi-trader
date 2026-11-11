@@ -19,6 +19,13 @@
   const ago = (s) => (s === null || s === undefined ? "–" : s < 90 ? Math.round(s) + "s" : s < 5400 ? Math.round(s / 60) + "m" : Math.round(s / 3600) + "h");
   const when = (ts) => (ts ? new Date(ts * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "–");
   const signClass = (v) => (v > 0 ? "pos" : v < 0 ? "neg" : "");
+  const bytes = (v) => {
+    if (v === null || v === undefined) return "–";
+    const units = ["B", "KB", "MB", "GB", "TB"];
+    let i = 0;
+    while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+    return v.toFixed(i ? 1 : 0) + " " + units[i];
+  };
   const compact = (v) => (v === null || v === undefined ? "–" : Math.abs(v) >= 1e6 ? (v / 1e6).toFixed(1) + "M" : Math.abs(v) >= 1e3 ? (v / 1e3).toFixed(1) + "K" : String(Math.round(v)));
 
   function node(tag, cls, text) {
@@ -107,6 +114,8 @@
     tennis_model_itf_only: ["Smaller tennis tournaments", "Tests the tennis prediction rules only in ITF tournaments."],
     tennis_model_no_late: ["Earlier in the match", "Tests the tennis prediction rules without entering near the end of a match."],
     tennis_model_edge_exit: ["Sell before the match ends", "Tests selling when buyers offer more than the bot thinks a contract is worth."],
+    tennis_model_itf_women: ["Women's ITF tournaments", "Tests the tennis prediction rules only in women's ITF tournaments."],
+    tennis_model_gap_cap: ["Skip big disagreements", "Tests skipping trades where the bot's estimate is more than 20 cents above the price."],
     tennis_model_comeback: ["Favourite after a first-set loss", "Tests backing the original favourite in set two after losing set one, and selling if buyers offer more than the bot's estimated value."],
   };
 
@@ -192,6 +201,8 @@
     const parts = [
       ["basic-strategies", "/api/strategies", (d) => renderBasicStrategies(d.strategies)],
       ["basic-trades", "/api/trades?limit=5", (d) => renderBasicTrades(d.trades)],
+      ["basic-storage", "/api/storage", (d) => $("basic-storage").replaceChildren(node("p", null,
+        `The bot is using ${bytes(d.total_bytes)}. ${bytes(d.disk_free_bytes)} of ${bytes(d.disk_total_bytes)} is still free on this disk.`))],
     ];
     if (Date.now() - state.basicChartAt > 60000) parts.push(["basic-equity", "/api/analytics", (d) => {
       Charts.line($("basic-equity"), d.equity_curve, { yFormat: money, label: "Practice account value", area: false, empty: "Your account history will appear after the bot saves a few updates." });
@@ -588,7 +599,15 @@
   // ------------------------------------------------------------- health
   async function renderHealth() {
     await refreshHeader();
-    const h = await api("/api/health");
+    const [h, s] = await Promise.all([api("/api/health"), api("/api/storage")]);
+    $("health-storage-path").textContent = `Disk space used by the bot's database, logs and other data files in ${s.path}.`;
+    $("health-storage").replaceChildren(
+      tile("Total", bytes(s.total_bytes), ""),
+      tile("Database", bytes(s.database_bytes), "including SQLite's temporary files"),
+      tile("Logs", bytes(s.logs_bytes), ""),
+      tile("Other files", bytes(s.total_bytes - s.database_bytes - s.logs_bytes), "e.g. backtest caches"),
+      tile("Free on disk", bytes(s.disk_free_bytes), `of ${bytes(s.disk_total_bytes)}`),
+    );
     const c = h.counts || {};
     $("health-kpis").replaceChildren(
       tile("Market snapshots", (c.market_snapshots || 0).toLocaleString(), "recorded order-book states"),

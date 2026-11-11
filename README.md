@@ -153,7 +153,9 @@ rules never count. Operators can also pause/resume a single strategy at runtime 
 Each `[strategies.tennis_model_variants.<name>]` table overrides a few `tennis_model`
 settings; the copy runs as strategy `tennis_model_<name>`, always in `observe` mode, with its
 own shadow ledger (`/api/trades?ledger=tennis_model_<name>`). The shipped config runs
-`itf_only` (ITF tours only), `no_late` (no late-stage entries), `edge_exit`
+`itf_only` (ITF tours only), `itf_women` (ITF women only), `no_late` (no late-stage
+entries), `gap_cap` (`max_model_gap = 0.20`: skip an option when the model's point
+probability is more than 20¢ above its ask), `edge_exit`
 (`exit_edge = 0.03`: sell once the bid after the taker fee beats the model's point probability
 by 3¢, never on a stale or suspect score), and **`comeback`** (the original pre-match favourite
 has lost set one and set two is underway in a best-of-three match). The comeback experiment
@@ -190,8 +192,8 @@ Every proposal passes, in order (`core/pipeline.py`):
    always measured as **maximum possible loss**, not win probability.
 5. **Execution evaluator** (`core/evaluator.py`): finds the largest whole-contract order that fits
    the budget (× `risk.unvalidated_size_multiplier` for strategies without validated evidence:
-   1.0 in the shipped config, so the main account sizes like the shadow ledgers; 0.25 is the
-   cautious setting), fits fractional Kelly (`risk.kelly_fraction`, 0.20 in the shipped config)
+   0.25 in the shipped config, the cautious setting; 1.0 sizes the main account like the
+   shadow ledgers), fits fractional Kelly (`risk.kelly_fraction`, 0.10 in the shipped config)
    on the conservative probability at the *actual* average cost, is fillable from displayed depth
    (× 50% liquidity haircut) within the limit price, and still clears `min_edge` **after** the
    walked average price and the exact Kalshi fee for that order size:
@@ -371,7 +373,7 @@ Start `uv run kalshi-trader run` (or `uv run kalshi-trader dashboard`) and open
 
 The dashboard opens in **Basic** view by default. It shows practice account value, total
 gain or loss, available cash, open trades, account history, plain-English strategy summaries
-and the five latest completed trades. Strategy summaries use only the current rules' test
+the five latest completed trades and the disk space the bot uses. Strategy summaries use only the current rules' test
 results and keep them separate from the main account. Labels explain estimated values and
 make clear that a positive practice result alone does not prove profitability.
 
@@ -396,7 +398,7 @@ Raw data for your own analysis (GET, no login, same host restrictions as the das
 `/api/export/trades.csv?ledger=tennis_model` and `/api/trades?ledger=tennis_model` (a
 strategy's shadow ledger; without `ledger` they return the main account).
 | Analytics | Equity curve, P&L over time, drawdown, win rate by entry price vs break-even, outcome distribution, performance by strategy, a "skill or luck?" significance panel, stored backtest runs |
-| System health | Recorded-data counts and per-component status (Kalshi REST and WebSocket, score feed, exchange status, engine loops): last update and success, last error, details such as request counts, failures and latency; components that stop updating are marked stale. Recent warnings and errors |
+| System health | Recorded-data counts and per-component status (Kalshi REST and WebSocket, score feed, exchange status, engine loops): last update and success, last error, details such as request counts, failures and latency; components that stop updating are marked stale. Storage: disk space used by the database, logs and other data files (as `du` counts it), and free space on that disk (`/api/storage`). Recent warnings and errors |
 
 Every chart has a "Table view" toggle. Light and dark themes are supported. Data kinds are kept
 apart everywhere: `live_paper` (main account, simulated fills on real books), `shadow`
@@ -705,7 +707,7 @@ Each strategy's status (`kalshi-trader strategies`, Strategies tab):
 | `experimental` | New, or its rules changed (version or config hash); no evidence |
 | `collecting_data` | Observe mode, accumulating forward shadow-ledger results |
 | `ready_for_paper` | Forward evidence meets every requirement; an operator *may* set `mode = "paper"` (never automatic) |
-| `paper_trading` | `mode = "paper"`; sized at `risk.unvalidated_size_multiplier` (1.0 in the shipped config, 0.25 cautious) until validated |
+| `paper_trading` | `mode = "paper"`; sized at `risk.unvalidated_size_multiplier` (0.25 in the shipped config, the cautious setting) until validated |
 | `paused` | Paused by an operator (persists) |
 | `rejected` | Forward evidence significantly negative; main-account entries blocked until the rules change |
 
@@ -940,6 +942,83 @@ and sizes. No strategy was validated, and no trading settings were changed in th
   Larger Kelly fractions, looser entry filters and faster turnover have no new supporting
   evidence here. Any eventual scaling should pass liquidity-capacity checks and drawdown
   stress tests that preserve clustering by day/tournament, including ongoing data costs.
+
+**Review 2026-11-08 (live-readiness check, about 19:00 UTC; no settings changed):** not ready
+for real money. Main paper equity $1,314 on $1,000. `tennis_model` (`1+6b183f35`) now passes
+the evidence gate: 60 settled shadow trades, +$321 after fees, 41 wins where the ask implied
+30.2 (p ≈ 0.002), tournament-clustered 95% CI of total P&L +$100 to +$572, max drawdown 3.3%.
+
+- **Too short and not steady:** the 60 trades span 3.9 days. Nov 7–8 made $264 of the $321
+  (82%), partly because Kelly 0.20 took the average stake from about $9 to about $20. Without
+  the best 10 trades the total is +$54.
+- **One niche:** 56 of the 60 trades were ITF (+$323); all other tours −$2. Over all 150 shadow
+  trades, non-ITF lost $46 on 13.
+- **Fill delay, split by book quality:** the 133 trades before the WebSocket connected (Nov 8
+  05:16 UTC) relied on 3-second REST polling and mostly saw an unchanged book, so their 97.6%
+  retention at 5 s flatters the result. The 17 WebSocket-era trades kept 95.4% at 2 s and 85.7%
+  at 5 s, with 3 of 17 missed. Still profitable, but a very small sample.
+- **Model versus market is unstable:** raw-model minus mid log loss was −0.007 (CI [−0.016,
+  +0.001]), against −0.0001 in the previous day's review. The held-out decision check was
+  +20¢ per contract (CI 6–33¢) on only 26 entries.
+- **Execution is unmeasured:** there is no order path (the client is GET-only) and paper fills
+  have never been compared with real ones (audit finding 7).
+
+**Review 2026-11-11 (dashboard API about 18:10 UTC):** the main account
+hit the 15% emergency stop (peak $1,479 marked, now $1,248, all positions closed). Since the
+realised peak on Nov 10 10:34 UTC, 58 trades lost $198 at about $18 a trade. `tennis_model`
+(`1+6b183f35`) is unvalidated again: 154 shadow trades, +$252, calibration-null p = 0.098,
+verdict "consistent with random variation around fair market prices".
+
+- **The Nov 8 result did not hold out of sample.** The 94 main-account trades opened after
+  that review won 43 times. The ask implied 41.3 and the model 58.8. They lost $66 after fees,
+  against +$286 on the 60 trades before. Over all 154 trades the model expected
+  $1,020 (point estimate) and $220 was realised. It overstates its edge several times over,
+  so Kelly 0.20 on its probabilities oversizes.
+- **Bigger disagreements do not win more.** Shadow trades with model minus ask of 15–20¢ won
+  36 where the ask implied 27.1 (+$262). At 20–30¢ they won 15 where it implied 15.4 (−$122).
+  Large gaps with a liquid market look like model error, not mispricing.
+- **Held-out calibration (717 test events)** now has the raw model worse than the mid (log
+  loss +0.0022, CI [−0.005, +0.010]): "no evidence the model adds information". Decision
+  check −0.8¢ per contract on 52 entries. No recalibration recommended.
+- **Slices (subgroups, so multiple comparisons):** ITF men flipped from +$132 to −$125.
+  ITF women were positive in both periods (+$156, +$87; 55 trades). NO-side entries lost in
+  both (−$74 on 23). ATP Challenger −$47 on 8. Late stage −$89 on 19 after Nov 8.
+- **Variants after Nov 8:** `edge_exit` +$105 on 96 (the best). Over all its trades it made
+  $162 more than holding the same buys (per-trade CI −$0.38 to +$3.09); 19 exits avoided
+  $358 of losses and 23 gave up $196 of wins. `itf_only` −$33, `no_late` −$7, `comeback`
+  −$55 on 16. `late_match` +$46 on 35 (p = 0.10) contradicts the 30-day favourite backtest.
+  `cross_market` made 12 trades in 10 days (+$1.24).
+- **Changes made after this review:** `risk.kelly_fraction` 0.20 → 0.10 (the rule above was to
+  go back at a 10% drawdown) and `risk.unvalidated_size_multiplier` 1.0 → 0.25. Neither is
+  part of a strategy's version tag, so no evidence was reset. Two new observe-only variants:
+  `itf_women` and `gap_cap` (`max_model_gap = 0.20`, a new optional setting that is excluded
+  from the hash when unset). Both ideas were picked from the data above, so only their
+  forward results count. All existing version tags were checked unchanged. The emergency stop
+  was left on.
+
+**Player-rating test 2026-11-11 (offline; no code or settings changed):** does a player's
+record add anything to the pre-match price? Elo ratings were built from Kalshi's own results
+(65,247 settled matches; players keyed by `custom_strike.tennis_competitor`; ATP/WTA from
+June 2025, Challengers from January 2026, ITF from April 2026), using FiveThirtyEight's
+published K = 250/(n+5)^0.4, not tuned. Ratings were taken as of each match's milestone
+start, using only results whose market had already closed. Pre-match price: the last
+1-minute candle ending ≥ 10 min before the start with spread ≤ 10¢, as in
+`market_data/prematch.py`.
+
+- **Elo alone works but is weak:** 64% of winners right, log loss 0.628. The pre-match mid
+  scores 0.533.
+- **Elo adds nothing to the price.** 13,827 matches since Sep 1 had a usable quote. Fit
+  before Oct 16 (7,242), tested after (6,585). Blend weight on Elo 0.02 ± 0.05.
+  Held-out log loss: blend minus recalibrated price +0.00005 (day-clustered CI −0.00008 to
+  +0.00021). No tour or experience bucket improved. The betting rule (3¢ after fees) found
+  no bets.
+- **Big disagreements favour the market.** Of 10,954 matches where both players had ≥ 5
+  prior matches, 879 had Elo ≥ 30 points above the price for one player: price 24.3¢,
+  Elo 60%, won 24.3%. Backing Elo's side lost 1–5¢ per contract in every gap bucket.
+- **Limitations:** results only cover matches Kalshi listed, there is no surface split, and
+  18–23% of ITF matches had no quote within 10¢ (the bot cannot use those either). A better
+  rating (surface, margin of victory) could still add something, but this test gives no
+  reason to build it.
 
 **Early-exit experiment review 2026-11-07:** verified through the live dashboard API that
 `tennis_model_edge_exit` was already running alongside the other strategies, in `observe`

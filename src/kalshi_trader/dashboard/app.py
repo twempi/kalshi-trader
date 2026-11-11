@@ -7,10 +7,13 @@ persisted local flags (pause/resume/emergency stop) - they never touch the excha
 
 from __future__ import annotations
 
+import contextlib
 import csv
 import io
 import ipaddress
 import json
+import os
+import shutil
 import time
 from decimal import Decimal
 from pathlib import Path
@@ -700,6 +703,37 @@ def create_app(settings: Settings, db: Database | None = None) -> FastAPI:
             "events": events,
             "now": now,
             "counts": {**repo.snapshot_counts(), "open_trades": open_count},
+        }
+
+    @app.get("/api/storage")
+    def storage() -> dict[str, Any]:
+        """Disk space the bot's files take up, like ``du``: the database's folder (which also
+        holds caches) plus the log folder if it lives elsewhere."""
+
+        def used(path: Path) -> int:
+            if not path.exists():
+                return 0
+            if path.is_file():
+                return path.lstat().st_blocks * 512
+            total = 0
+            for root, _, files in os.walk(path):
+                for name in [".", *files]:  # "." counts the folder itself, as du does
+                    with contextlib.suppress(OSError):  # rotated or deleted while walking
+                        total += os.lstat(os.path.join(root, name)).st_blocks * 512
+            return total
+
+        db, logs = settings.db_path, settings.log_dir
+        data_dir = db.parent
+        sidecars = [db.with_name(db.name + s) for s in ("-wal", "-shm", "-journal")]
+        logs_bytes = used(logs)
+        disk = shutil.disk_usage(data_dir if data_dir.exists() else Path.cwd())
+        return {
+            "path": str(data_dir),
+            "total_bytes": used(data_dir) + (0 if logs.is_relative_to(data_dir) else logs_bytes),
+            "database_bytes": sum(used(p) for p in [db, *sidecars]),
+            "logs_bytes": logs_bytes,
+            "disk_free_bytes": disk.free,
+            "disk_total_bytes": disk.total,
         }
 
     @app.get("/api/export/trades.csv")

@@ -302,6 +302,12 @@ class TennisModelStrategy(Strategy):
                 if not (s.min_price <= price <= s.max_price):
                     why.append(f"{label}: ask {price} outside [{s.min_price}, {s.max_price}]")
                     continue
+                if s.max_model_gap is not None and fair.p - float(price) > float(s.max_model_gap):
+                    why.append(
+                        f"{label}: model p={fair.p:.3f} exceeds ask {price} by more than "
+                        f"{s.max_model_gap}"
+                    )
+                    continue
                 mult = option.market.fee_multiplier
                 fee_pc = fee_per_contract_estimate(
                     price, LIMIT_FEE_HINT, self.fees.taker_rate, mult
