@@ -248,6 +248,19 @@ class Repository:
             with self.db.session() as s:
                 s.execute(sqlite_insert(MarketSnapshotRow), list(rows))
 
+    def prune_market_snapshots(self, before_ts: float, batch: int = 10_000) -> int:
+        """Delete up to ``batch`` order-book snapshots older than ``before_ts``. Small
+        batches keep each write lock short; call repeatedly to work through a backlog."""
+        with self.db.session() as s:
+            old = (
+                select(MarketSnapshotRow.id)
+                .where(MarketSnapshotRow.received_ts < before_ts)
+                .limit(batch)
+                .scalar_subquery()
+            )
+            result = s.execute(delete(MarketSnapshotRow).where(MarketSnapshotRow.id.in_(old)))
+            return result.rowcount or 0
+
     def insert_score_snapshots(self, rows: Sequence[dict[str, Any]]) -> None:
         if rows:
             with self.db.session() as s:

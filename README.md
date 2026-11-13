@@ -165,7 +165,19 @@ chance above 50%; no new strength cutoff, recovery target or exit parameter was 
 guessed. It does not assume every price drop is a bargain, predict short-term price rebounds,
 or fetch head-to-head history. It appears as **Favourite after a first-set loss** in Basic
 and `tennis_model_comeback` in Advanced, with its own shadow ledger and early-exit comparison.
-Promote a winner by copying its settings into
+
+A data-collection batch added on 2026-11-13 is grouped in `config/settings.toml` (see
+[Results to date](#results-to-date)):
+- **Shrink toward the market** (`shrink50`, `shrink75`, `shrink50_exit`) uses the existing
+  calibration blend, with the model taken halfway or three quarters of the way to the mid.
+- **Higher bar and tight books** (`edge6`, `tight_spread`).
+- **Partitions** that split `tennis_model`'s trades into non-overlapping parts: by price
+  (`favourites` / `underdogs`), stage (`early_only` / `mid_only` / `late_only`) and tour
+  (`itf_men` / `itf_women` / `pro_tours`).
+- **The no-model control** `price_threshold` is also on in observe mode.
+
+With this many variants, the best one will look good by luck. A winner should be confirmed on a
+later, separate window before you promote it by copying its settings into
 `[strategies.tennis_model]`.
 
 ```bash
@@ -789,7 +801,7 @@ is synthetic and is never shown as trading results.
 
 | Path | Contents |
 | --- | --- |
-| `data/kalshi_trader.db` | SQLite database (WAL): markets, events, snapshots, opportunities and rejection reasons, daily diagnostics, model predictions, simulated orders and trades (main + shadow accounts), equity, strategy state and history, safety state, health, market-making research fills, backtest runs (with config, universe and ledger) |
+| `data/kalshi_trader.db` | SQLite database (WAL; order-book snapshots kept `market_data.snapshot_retention_days`, 14 in the shipped config): markets, events, snapshots, opportunities and rejection reasons, daily diagnostics, model predictions, simulated orders and trades (main + shadow accounts), equity, strategy state and history, safety state, health, market-making research fills, backtest runs (with config, universe and ledger) |
 | `data/logs/kalshi-trader.jsonl` | Structured JSON logs from `kalshi-trader run`, rotated at 20 MB × 10 files (one-shot commands such as `scan` and `backtest` log to the console only) |
 | `data/cache/` | Optional backtest download cache |
 
@@ -1079,6 +1091,48 @@ new baseline. It is a risk decision, not evidence that the strategy works.
   observe-only variant that shrinks the model toward the mid (p = mid + k·(model − mid)), with
   k fitted on held-out *entered* trades, not on all observations. It was not built: about 100
   post-Nov-9 trades are too few to fit k.
+
+**Observe-only variant batch 2026-11-13 (data collection; nothing promoted):** after the
+drawdown review above, 12 `tennis_model` variants were added and the `price_threshold` control
+was switched from off to observe. The goal is broad forward data on where, if anywhere, the
+edge survives, not a bet on any single idea. All 9 existing version tags were checked
+unchanged, so no evidence was reset. The values are fixed test points, not fitted:
+`shrink50` and `shrink75` use calibration (slope, market_weight) = (0.5, 0.5) and
+(0.25, 0.75), targeting the model's overconfidence on the trades it picks. `edge6` uses
+min_edge 0.06, `tight_spread` max_spread 0.02, and `underdogs` / `favourites` split at 49¢ /
+50¢ (bounds are inclusive). The stage and tour partitions repeat the slices that looked good
+or bad in the review, but now as a forward test.
+
+How to read them later:
+- Compare variants over the same window and the same events.
+- Count tournament-days, not trades: shadow trades cluster.
+- With 22 strategies running, expect one or two to look significant by chance, so a winner
+  needs to repeat on a later window first.
+- `price_threshold` is the bar: a model variant that cannot beat the no-model control has not
+  shown the model adds anything.
+
+**Disk usage 2026-11-13:** the database reached 101 GB, with the server disk 95% full
+(25 GB free). `market_snapshots` held 238.8 million rows. Since the WebSocket connected
+(Nov 8), every change in a market's top 5 book levels wrote a row: about 340 rows a second
+for 62 markets, about 12 GB a day at roughly 425 bytes a row. systemd counted 116 GB written
+in the 36 hours before the 11:20 UTC restart. At that rate the disk would have filled in
+about 2 days, stopping the bot.
+
+- **New `market_data.snapshot_min_interval_s = 1.0`:** a market's changed book is written at
+  most once a second. The latest state is still written, with its own receive time, once the
+  second has passed, so replay never sees a stale book for more than about a second. This
+  cuts the volume to at most 62 rows a second.
+- **Cost:** quotes that lived under a second are no longer recorded. Fill-delay checks at 2 s
+  and 5 s are still meaningful. Sub-second ones are not.
+- Recording settings are not part of any strategy's version tag.
+- **New `market_data.snapshot_retention_days = 14`:** recorded order books older than 14 days
+  are deleted in small batches during housekeeping (10,000 rows every 2 s).
+  - SQLite reuses the freed space, so once deletion starts (around Nov 16, when the Nov 2 data
+    turns 14 days old) the database stops growing. It will stay at about its current 101 GB.
+    It won't shrink: `VACUUM` would need about as much free space again.
+  - Trades, shadow ledgers, evidence, model predictions and score snapshots are not touched.
+  - Replays and fill-delay checks can then only use the last 14 days of books. Older trades
+    appear in the fill-delay report under `no_recorded_book`.
 
 **Early-exit experiment review 2026-11-07:** verified through the live dashboard API that
 `tennis_model_edge_exit` was already running alongside the other strategies, in `observe`

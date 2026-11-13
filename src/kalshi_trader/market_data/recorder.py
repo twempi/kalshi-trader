@@ -24,13 +24,21 @@ def _f(value: Any) -> float | None:
 
 class Recorder:
     def __init__(
-        self, repo: Repository, depth_levels: int, book_heartbeat_s: float, score_heartbeat_s: float
+        self,
+        repo: Repository,
+        depth_levels: int,
+        book_heartbeat_s: float,
+        score_heartbeat_s: float,
+        book_min_interval_s: float = 0.0,
     ) -> None:
         self._repo = repo
         self._depth = depth_levels
         self._book_heartbeat = book_heartbeat_s
         self._score_heartbeat = score_heartbeat_s
+        self._book_min_interval = book_min_interval_s
         self._last_book: dict[str, tuple[str, float]] = {}
+        # Changes held back by the min interval: only the latest per market, written by flush.
+        self._held_books: dict[str, tuple[str, float, dict[str, Any]]] = {}
         self._last_score: dict[str, tuple[str, float]] = {}
         self._market_rows: list[dict[str, Any]] = []
         self._score_rows: list[dict[str, Any]] = []
@@ -44,22 +52,26 @@ class Recorder:
         signature = book.signature(self._depth)
         last = self._last_book.get(ticker)
         if last and last[0] == signature and now - last[1] < self._book_heartbeat:
+            self._held_books.pop(ticker, None)  # back to the recorded state
             return
-        self._last_book[ticker] = (signature, now)
         bid, ask = book.best_bid("yes"), book.best_ask("yes")
-        self._market_rows.append(
-            {
-                "ticker": ticker,
-                "received_ts": now,
-                "source": book.source,
-                "yes_bid": _f(bid[0]) if bid else None,
-                "yes_bid_size": _f(bid[1]) if bid else None,
-                "yes_ask": _f(ask[0]) if ask else None,
-                "yes_ask_size": _f(ask[1]) if ask else None,
-                "status": status,
-                "depth_json": json.dumps(book.top_levels(self._depth), separators=(",", ":")),
-            }
-        )
+        row = {
+            "ticker": ticker,
+            "received_ts": now,
+            "source": book.source,
+            "yes_bid": _f(bid[0]) if bid else None,
+            "yes_bid_size": _f(bid[1]) if bid else None,
+            "yes_ask": _f(ask[0]) if ask else None,
+            "yes_ask_size": _f(ask[1]) if ask else None,
+            "status": status,
+            "depth_json": json.dumps(book.top_levels(self._depth), separators=(",", ":")),
+        }
+        if last and now - last[1] < self._book_min_interval:
+            self._held_books[ticker] = (signature, now, row)
+            return
+        self._held_books.pop(ticker, None)
+        self._last_book[ticker] = (signature, now)
+        self._market_rows.append(row)
 
     def on_score(self, event_ticker: str | None, result: ProviderResult) -> None:
         state = result.state
@@ -81,7 +93,13 @@ class Recorder:
             }
         )
 
-    def flush(self) -> None:
+    def flush(self, now: float | None = None) -> None:
+        now = time.time() if now is None else now
+        for ticker, (signature, ts, row) in list(self._held_books.items()):
+            if now - self._last_book[ticker][1] >= self._book_min_interval:
+                del self._held_books[ticker]
+                self._last_book[ticker] = (signature, ts)
+                self._market_rows.append(row)
         if self._market_rows:
             rows, self._market_rows = self._market_rows, []
             self._repo.insert_market_snapshots(rows)

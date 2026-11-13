@@ -26,6 +26,8 @@ lookback_hours = 18
 rest_poll_interval_s = 3.0      # REST order-book polling when the WebSocket is unavailable
 recorded_depth_levels = 5
 snapshot_heartbeat_s = 60
+snapshot_min_interval_s = 1.0   # 2026-11-13: every WebSocket book change was a row (~340/s, ~12 GB/day, disk 95% full); now at most 1/s per market, latest state kept
+snapshot_retention_days = 14   # 2026-11-13: delete recorded books older than 14 days so the database stops growing (disk 95% full); trades, evidence and score snapshots are kept
 status_refresh_interval_s = 30
 
 [tennis]
@@ -103,6 +105,49 @@ tours = ["ITF_WOMEN"]
 [strategies.tennis_model_variants.gap_cap]    # 2026-11-11: model 20-30c above the ask won no more than the ask implied (-$122); 0.20 comes from that data, so only forward results count
 max_model_gap = 0.20
 
+# 2026-11-13 data-collection batch: observe only, to see what sticks. The values are fixed test
+# points, not fitted. With this many variants the best one will look good by luck, so any
+# winner must repeat on a later, separate window before it is promoted.
+# Shrink toward the market: the model overstated its edge on the trades it picked (147 wins
+# predicted, 128 realised, ask implied 105). Uses the existing logit blend, model^slope * mid^weight.
+[strategies.tennis_model_variants.shrink50]   # halfway between model and mid
+calibration = { slope = 0.5, market_weight = 0.5 }
+
+[strategies.tennis_model_variants.shrink75]   # three quarters of the way to the mid
+calibration = { slope = 0.25, market_weight = 0.75 }
+
+[strategies.tennis_model_variants.shrink50_exit]  # shrink50 plus edge_exit's sale rule (the best variant so far)
+calibration = { slope = 0.5, market_weight = 0.5 }
+exit_edge = 0.03
+
+[strategies.tennis_model_variants.edge6]      # double the entry bar: do bigger conservative edges hold up?
+min_edge = 0.06
+
+[strategies.tennis_model_variants.tight_spread]   # only tight books (more liquid, likely more efficient prices)
+max_spread = 0.02
+
+# Partitions: each splits tennis_model's trades into non-overlapping parts, to see where any edge lives.
+[strategies.tennis_model_variants.favourites] # backed side priced 50c or more
+min_price = 0.50
+
+[strategies.tennis_model_variants.underdogs]  # backed side priced under 50c (bounds are inclusive and prices whole cents)
+max_price = 0.49
+
+[strategies.tennis_model_variants.early_only] # first set
+stages = ["early"]
+
+[strategies.tennis_model_variants.mid_only]
+stages = ["mid"]
+
+[strategies.tennis_model_variants.late_only]  # a player within 3 games of winning
+stages = ["late"]
+
+[strategies.tennis_model_variants.itf_men]    # complements itf_women; ITF men flipped from +$132 to -$125 after 11-08
+tours = ["ITF_MEN"]
+
+[strategies.tennis_model_variants.pro_tours]  # everything but ITF (ATP, WTA and their Challengers)
+tours = ["ATP", "WTA", "ATP_CHALLENGER", "WTA_CHALLENGER"]
+
 [strategies.cross_market]        # B: baskets with verified settlement relationships
 mode = "paper"
 min_edge = 0.01                  # $/basket unit after all fees
@@ -127,7 +172,7 @@ max_spread = 0.04
 limit_slippage = 0.01
 
 [strategies.price_threshold]     # Baseline 1: favourites in a price band (no model)
-mode = "off"
+mode = "observe"                 # 2026-11-13: on as the no-model control the tennis variants must beat (was off)
 min_price = 0.90
 max_price = 0.97
 max_spread = 0.03

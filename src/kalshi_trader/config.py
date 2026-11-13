@@ -110,6 +110,12 @@ class MarketDataSettings(BaseModel):
     recorded_depth_levels: int = 5
     # Record an unchanged snapshot at least this often (keeps a heartbeat in the data).
     snapshot_heartbeat_s: float = 60.0
+    # Write a market's changed book at most this often; the latest state is still written
+    # once the interval passes. 0 = every change.
+    snapshot_min_interval_s: float = Field(default=0.0, ge=0.0)
+    # Delete recorded order books older than this many days (freed space is reused, so the
+    # database stops growing). None = keep everything. Score snapshots and trades are kept.
+    snapshot_retention_days: float | None = Field(default=None, gt=0)
     status_refresh_interval_s: float = 30.0
 
 

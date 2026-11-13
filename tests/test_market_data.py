@@ -255,3 +255,49 @@ async def test_ws_reconnects_resubscribes_and_tracks_sequence() -> None:
     assert client.health.gaps_detected == 1 and gaps == [("orderbook_delta", ["MKT-A"])]
     book = hub.book("MKT-A")
     assert book.valid and book.best_bid("yes") == (D("0.41"), D("3"))  # duplicate not re-applied
+
+
+def test_recorder_min_interval_keeps_only_the_latest_state() -> None:
+    from kalshi_trader.market_data.recorder import Recorder
+
+    written: list[dict] = []
+
+    class Repo:
+        def insert_market_snapshots(self, rows: list[dict]) -> None:
+            written.extend(rows)
+
+    rec = Recorder(
+        Repo(), depth_levels=5, book_heartbeat_s=60, score_heartbeat_s=60, book_min_interval_s=1.0
+    )  # type: ignore[arg-type]
+
+    def tick(size: str, at: float) -> None:
+        book = OrderBook("T")
+        book.apply_snapshot(
+            [(D("0.40"), D(size))], [(D("0.55"), D("10"))], source="ws", received_at=at
+        )
+        rec.on_book("T", book)
+
+    tick("1", 100.0)  # first state: written at once
+    tick("2", 100.3)  # changes inside the interval: only the latest is kept
+    tick("3", 100.6)
+    rec.flush(now=100.8)
+    assert [r["yes_bid_size"] for r in written] == [1.0]
+    rec.flush(now=101.0)  # interval passed: the held state goes out with its own receive time
+    assert [(r["yes_bid_size"], r["received_ts"]) for r in written] == [(1.0, 100.0), (3.0, 100.6)]
+    tick("4", 101.2)  # inside the interval from 100.6's write
+    tick("3", 101.3)  # back to the recorded state: nothing is held
+    rec.flush(now=105.0)
+    assert len(written) == 2
+
+
+def test_prune_market_snapshots_deletes_only_old_rows_in_batches() -> None:
+    from kalshi_trader.database.db import Database
+    from kalshi_trader.database.repository import Repository
+
+    repo = Repository(Database(":memory:"))
+    row = {"ticker": "T", "source": "ws", "depth_json": "{}"}
+    repo.insert_market_snapshots([row | {"received_ts": float(ts)} for ts in (1, 2, 3, 10)])
+    assert repo.prune_market_snapshots(before_ts=5, batch=2) == 2  # a batch at a time
+    assert repo.prune_market_snapshots(before_ts=5, batch=2) == 1
+    assert repo.prune_market_snapshots(before_ts=5, batch=2) == 0
+    assert repo.snapshot_counts()["market_snapshots"] == 1  # the recent row stays

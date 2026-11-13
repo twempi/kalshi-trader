@@ -125,6 +125,7 @@ class TradingEngine:
             md.recorded_depth_levels,
             md.snapshot_heartbeat_s,
             settings.tennis.snapshot_heartbeat_s,
+            md.snapshot_min_interval_s,
         )
         self.discovery = TennisDiscovery(self.rest, self.repo, settings.discovery)
         cm = settings.strategies.cross_market
@@ -814,6 +815,9 @@ class TradingEngine:
     # ========================================================= housekeeping
     async def _housekeeping_step(self) -> None:
         self.recorder.flush()
+        retention = self.settings.market_data.snapshot_retention_days
+        if retention is not None:
+            self.repo.prune_market_snapshots(time.time() - retention * 86400.0)
         self.core.diagnostics.flush()
         self.health["recorder"].ok(
             market_rows=self.recorder.market_rows_written,

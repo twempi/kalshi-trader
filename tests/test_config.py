@@ -48,7 +48,11 @@ def test_toml_values_load_and_secrets_are_refused(
 def test_shipped_config_file_is_valid(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("KT_CONFIG_PATH", str(DEFAULT_CONFIG_PATH))
     s = Settings(_env_file=None)
-    assert s.strategies.late_match.enabled and not s.strategies.price_threshold.enabled
+    assert s.strategies.late_match.enabled and s.strategies.price_threshold.mode == "observe"
+    variants = s.strategies.tennis_variants()
+    assert all(v.mode == "observe" for v in variants.values())  # never main-account capital
+    shrink = variants["tennis_model_shrink50"].calibration
+    assert (shrink.slope, shrink.market_weight) == (0.5, 0.5)
     assert "KXATPMATCH" in s.discovery.series_tickers
     assert [str(n) for n in s.dashboard.control_networks] == [
         "100.64.0.0/10",
