@@ -822,8 +822,28 @@ def create_app(settings: Settings, db: Database | None = None) -> FastAPI:
             repo.set_flag(EMERGENCY_STOP, True)
             repo.set_state(PAUSE_REASON, "EMERGENCY STOP from dashboard")
         elif action == "clear_emergency_stop":
+            # The engine re-engages the stop on its next check while the drawdown is breached.
+            dd = overview()["drawdown_fraction"] or 0.0
+            if dd >= float(settings.risk.max_drawdown_fraction):
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"drawdown {dd:.1%} is still at or above the "
+                    f"{float(settings.risk.max_drawdown_fraction):.0%} limit, so the stop would "
+                    "re-engage. Reset the peak first if you accept the loss.",
+                )
             repo.set_flag(EMERGENCY_STOP, False)
             repo.set_state(PAUSE_REASON, "")
+        elif action == "reset_peak":
+            equity = overview()["equity"]
+            if equity is None:
+                raise HTTPException(status_code=409, detail="no main paper account yet")
+            with database.session() as s:
+                account = s.get(PaperAccountRow, MAIN_ACCOUNT_ID)
+                old = account.peak_equity
+                account.peak_equity = Decimal(str(round(equity, 2)))
+            repo.record_event(
+                "warning", "dashboard", f"peak equity reset from {old} to {equity:.2f}"
+            )
         else:
             raise HTTPException(status_code=404, detail="unknown action")
         repo.record_event("warning", "dashboard", f"operator action: {action}")

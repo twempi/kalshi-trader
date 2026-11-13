@@ -4,7 +4,8 @@ Per evaluation cycle (``run_cycle``)::
 
     strategies.scan(ctx) ──> opportunities (candidates + filtered/unsupported notes)
         │
-        ├─ shadow ledgers: each strategy alone, identical risk rules, its own account
+        ├─ shadow ledgers: each strategy alone, its own account, the same risk rules
+        │  except the operator brakes (pause, emergency stop, daily-loss/drawdown limits)
         │
         └─ main account: candidates of strategies in paper mode (and not paused/rejected)
              1. market checks per leg (state, freshness, spread, liquidity, trade counts)

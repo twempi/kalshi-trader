@@ -462,7 +462,13 @@ uv run kalshi-trader reset-account --yes               # wipe simulated history,
 The same controls are on the dashboard. A paused engine keeps recording data, evaluating
 strategies (shadow ledgers keep running) and settling existing positions. Individual strategies
 are paused with `uv run kalshi-trader strategies pause <name>` or the Strategies tab. The emergency stop is also triggered automatically when the drawdown limit
-is hit. Change the bankroll with `KT_PAPER__STARTING_BALANCE` before the first run, or with
+(`risk.max_drawdown_fraction`, measured from the main account's peak equity) is hit. While the
+drawdown is still past the limit, the dashboard's **Clear stop** is refused, because the engine
+would re-engage the stop on its next check. **Reset peak** (Advanced) sets the peak to the
+current equity, which accepts the loss so far; the limit is then measured from there. Do that
+only as a deliberate decision, and record it in [Results to date](#results-to-date). Loss
+limits apply to the main account only: shadow ledgers keep trading through a drawdown so the
+evidence is not cut off at its low point. Change the bankroll with `KT_PAPER__STARTING_BALANCE` before the first run, or with
 `reset-account` afterwards.
 
 ## Running continuously (systemd user service)
@@ -1019,6 +1025,60 @@ start, using only results whose market had already closed. Pre-match price: the 
   18–23% of ITF matches had no quote within 10¢ (the bot cannot use those either). A better
   rating (surface, margin of victory) could still add something, but this test gives no
   reason to build it.
+
+**Drawdown review and peak reset 2026-11-13 (dashboard API):** the main account had been on
+the emergency stop since 2026-11-11 (last entry 19:26 UTC). Equity $1,248.20 against a peak of
+$1,478.97 marked ($1,453.61 realised, Nov 10 10:34 UTC): a 15.6% drawdown against the 15%
+limit, with no open positions. Clearing the stop from the dashboard could not work. The engine
+re-engaged it within a minute every time (eight tries, Nov 12 17:16 to Nov 13 11:04 UTC),
+because the drawdown was still past the limit. **Operator decision:** reset the main account's peak to its current equity ($1,248.20)
+and clear the stop, keeping the reduced sizing from 11-11. This accepts the $231 drop as the
+new baseline. It is a risk decision, not evidence that the strategy works.
+
+- **Where the money went.** The 57 trades after the realised peak lost $205.41 at about $18 a
+  stake (Kelly 0.20, size multiplier 1.0). They won 22 times where the ask implied 25.2 and the
+  model 36.2. ITF men −$157 on 30; ATP/WTA Challenger −$79 on 5; ITF women +$31 on 22. Entries
+  at 20–30¢ −$157 on 15 (2 wins, ask implied 3.7). Early stage −$166 on 27. At the current
+  sizing (Kelly 0.10, multiplier 0.25, about ⅛ of the stake) the same trades would have lost
+  about $26.
+- **The edge faded around Nov 9; the model's overconfidence did not.** All 253 main-account
+  trades: +$248, 128 wins where the ask implied 105.5 and the model 147.1. By opening date
+  (the split was picked after seeing daily results, and trades cluster by tournament and
+  day, so these z-scores are descriptive only):
+  Nov 2–8, 160 trades, +$327, 86 wins vs ask 64.9 (z +4.1) and model 89.1.
+  Nov 9–11, 93 trades, −$79 after $60 of fees, 42 wins vs ask 40.7 (z +0.3) and model 58.0
+  (z −3.7). In the second period the picks won only as often as the price implied, so fees
+  made it a loss. Meanwhile the model still predicted 17 extra wins and $766 of point-estimate
+  expected P&L.
+- **Forward shadow data since the 11-11 deploy (about 36 h, 21 events):** `edge_exit` −$20.65
+  on 21; `itf_only` −$28.98 on 19; `no_late` +$25.99 on 17; `itf_women` +$27.70 on 9 (5 wins vs
+  ask 3.1); `gap_cap` −$15.68 on 19 (9 wins vs ask 10.1); `comeback` −$11.66 on 2; `late_match`
+  +$9.92 on 5. In every tennis variant except `itf_women`, realised wins fell 1.5–3 sd short of
+  the model's expectation. Far too few trades to rank variants, but consistent with the market
+  price being right since Nov 9.
+- **Bug found: shadow ledgers froze on drawdown.** Shadow ledgers skipped the pause and stop
+  flags but still applied the daily-loss and drawdown limits. The `tennis_model` shadow ledger
+  passed 15% below its own marked peak and stopped at the same moment as main (last entry
+  Nov 11 19:26 UTC), while `edge_exit`, with identical entries, opened 21 more. Nothing can
+  clear a shadow ledger's halt. The main strategy's evidence had therefore stopped at its low
+  point, and the evidence gate's own 20% drawdown failure (`evidence.max_drawdown_fraction`)
+  could never be reached. **Fixed:** loss limits now apply to the main account only. No
+  version tag changes; the `tennis_model` shadow ledger resumes under `1+6b183f35` after
+  deploy.
+- **Dashboard:** Clear stop is now refused, with the reason, while the drawdown is past the
+  limit. A Reset peak action was added (see
+  [Starting, pausing and stopping](#starting-pausing-and-stopping-paper-trading)), so a
+  future reset needs no sudo.
+- **No strategy or sizing setting changed.** With no edge, the Nov 9–11 loss rate at the
+  current size is about −$0.11 a trade, roughly −$3 a day at 33 trades a day. A fresh 15%
+  drawdown ($187) would take about two months at that rate, so a losing streak, not fee drag,
+  is the realistic way to hit the stop again. If it trips again, stop rather than reset.
+- **What would change the picture:** the model is overconfident specifically on the trades it
+  selects. Picking the largest model-versus-market gaps also picks the model's largest errors
+  (winner's curse), which the all-observation calibration fit cannot see. A candidate is an
+  observe-only variant that shrinks the model toward the mid (p = mid + k·(model − mid)), with
+  k fitted on held-out *entered* trades, not on all observations. It was not built: about 100
+  post-Nov-9 trades are too few to fit k.
 
 **Early-exit experiment review 2026-11-07:** verified through the live dashboard API that
 `tennis_model_edge_exit` was already running alongside the other strategies, in `observe`

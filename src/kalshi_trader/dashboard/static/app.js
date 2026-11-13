@@ -47,7 +47,7 @@
 
   async function api(path, options) {
     const res = await fetch(path, options);
-    if (!res.ok) throw new Error(path + " -> " + res.status);
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || path + " -> " + res.status);
     return res.json();
   }
 
@@ -680,6 +680,7 @@
   $("btn-resume").addEventListener("click", () => control("resume"));
   $("btn-estop").addEventListener("click", () => control("emergency_stop", "Engage the emergency stop? Paper trading halts until you clear it."));
   $("btn-clear-estop").addEventListener("click", () => control("clear_emergency_stop", "Clear the emergency stop?"));
+  $("btn-reset-peak").addEventListener("click", () => control("reset_peak", "Reset the peak to current equity? The drawdown limit is then measured from today's equity, so the loss so far no longer counts toward it."));
   $("basic-toggle").addEventListener("click", () => {
     const o = state.overview;
     if (!o || $("basic-toggle").disabled) return;

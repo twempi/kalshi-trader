@@ -412,6 +412,28 @@ def test_dashboard_controls_require_header(settings: Settings) -> None:
     assert client.post("/api/control/nope", headers={"X-Kalshi-Trader": "1"}).status_code == 404
 
 
+def test_clear_stop_refuses_while_drawdown_breached_until_peak_reset(settings: Settings) -> None:
+    from kalshi_trader.database.db import Database
+    from kalshi_trader.database.tables import PaperAccountRow
+    from kalshi_trader.execution.paper import PaperBroker
+
+    db = Database(settings.db_path)
+    PaperBroker(db, settings.paper, settings.fees).account()  # creates the main account
+    with db.session() as s:
+        s.get(PaperAccountRow, 1).peak_equity = settings.paper.starting_balance * D("1.25")
+    client = TestClient(create_app(settings, db), client=("127.0.0.1", 50000))
+    header = {"X-Kalshi-Trader": "1"}
+    client.post("/api/control/emergency_stop", headers=header)
+    refused = client.post("/api/control/clear_emergency_stop", headers=header)
+    assert refused.status_code == 409 and "drawdown 20.0%" in refused.json()["detail"]
+    assert client.get("/api/overview").json()["emergency_stop"] is True
+    assert client.post("/api/control/reset_peak", headers=header).status_code == 200
+    overview = client.get("/api/overview").json()
+    assert overview["peak_equity"] == overview["equity"] and overview["drawdown_fraction"] == 0
+    assert client.post("/api/control/clear_emergency_stop", headers=header).status_code == 200
+    assert client.get("/api/overview").json()["emergency_stop"] is False
+
+
 def test_dashboard_controls_from_tailnet_only_when_configured(settings: Settings) -> None:
     header = {"X-Kalshi-Trader": "1"}
     phone = ("100.101.102.103", 50000)  # a device on the tailnet, as `tailscale serve` reports

@@ -247,9 +247,12 @@ class RiskManager:
                 reasons.append("emergency stop active")
             if not self.trading_enabled():
                 reasons.append("paper trading paused")
+            # Loss limits are an operator brake, so main account only. On a shadow (evidence)
+            # ledger nothing can clear a drawdown halt: it would freeze the evidence at its
+            # low point and hide the evidence gate's own, larger drawdown failure.
+            reasons.extend(self.check_account_limits(account, escalate=escalate))
         if account.open_positions >= s.max_open_positions:
             reasons.append(f"max open positions ({s.max_open_positions})")
-        reasons.extend(self.check_account_limits(account, escalate=escalate))
         return reasons
 
     def budget(self, opp: Opportunity, account: AccountSnapshot) -> RiskBudget:

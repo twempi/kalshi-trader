@@ -143,9 +143,10 @@ def test_rejects_portfolio_limits_and_escalates(risk: RiskManager) -> None:
     assert risk.check_portfolio(account()) == []
 
 
-def test_shadow_checks_do_not_escalate(risk: RiskManager) -> None:
-    dd = account(equity=D("800"), cash=D("800"), day_start_equity=D("800"))
-    assert any("drawdown" in r for r in risk.check_portfolio(dd, escalate=False, safety=False))
+def test_shadow_checks_ignore_loss_limits(risk: RiskManager) -> None:
+    # A shadow ledger past the drawdown and daily-loss limits keeps collecting evidence.
+    dd = account(equity=D("800"), cash=D("800"), peak_equity=D("1000"))
+    assert risk.check_portfolio(dd, escalate=False, safety=False) == []
     assert not risk.emergency_stopped()
 
 
